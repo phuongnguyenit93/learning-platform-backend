@@ -1,0 +1,7 @@
+spring:
+  application:
+    name: learning-platform-backend
+
+server:
+  port: ${PORT:8080}
+  shutdown: graceful
