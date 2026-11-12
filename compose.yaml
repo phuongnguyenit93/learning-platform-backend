@@ -1,0 +1,28 @@
+name: learning-platform-backend
+
+# Single-host Docker Compose deployment for the Oracle A1 VPS.
+# The secret VALUES never appear in this file, environment variables, or image.
+# The source files live outside the Git checkout on the VPS.
+services:
+  backend:
+    image: ${BACKEND_IMAGE:-ghcr.io/phuongnguyenit93/learning-platform-backend:latest}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: oracle
+      # Set schema lookup only; does not grant extra database privileges.
+      # Allows a SELECT-only LEARNING_READ login to query LEARNING_PLATFORM tables.
+      SPRING_DATASOURCE_HIKARI_CONNECTION_INIT_SQL: "ALTER SESSION SET CURRENT_SCHEMA=${ORACLE_SCHEMA:-LEARNING_PLATFORM}"
+    secrets:
+      - spring.datasource.url
+      - spring.datasource.username
+      - spring.datasource.password
+
+secrets:
+  spring.datasource.url:
+    file: ${LEARNING_SECRETS_DIR:-/opt/learning-platform/secrets}/spring.datasource.url
+  spring.datasource.username:
+    file: ${LEARNING_SECRETS_DIR:-/opt/learning-platform/secrets}/spring.datasource.username
+  spring.datasource.password:
+    file: ${LEARNING_SECRETS_DIR:-/opt/learning-platform/secrets}/spring.datasource.password

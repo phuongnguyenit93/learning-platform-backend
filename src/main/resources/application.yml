@@ -5,3 +5,32 @@ spring:
 server:
   port: ${PORT:8080}
   shutdown: graceful
+
+# Keep the existing health-only deployment working until Oracle credentials
+# and network access are configured. The read-only catalog is opt-in.
+---
+spring:
+  config:
+    activate:
+      on-profile: "!oracle"
+  autoconfigure:
+    exclude: org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+
+---
+spring:
+  config:
+    activate:
+      on-profile: oracle
+    # Compose grants read-only files under /run/secrets/. Each filename
+    # (spring.datasource.url, .username, .password) becomes a Spring property.
+    # Optional keeps local H2 tests working without production secrets.
+    import: optional:configtree:/run/secrets/
+  datasource:
+    driver-class-name: oracle.jdbc.OracleDriver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 0
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false

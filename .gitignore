@@ -5,4 +5,7 @@ build/
 *.iml
 out/
 .env
+*.env
+secrets/
+.secrets/
 *.log
