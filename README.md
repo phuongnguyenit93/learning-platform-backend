@@ -170,11 +170,72 @@ this table to exist in Oracle before being used.
 | `NAME`, `DESCRIPTION` | Display name and optional description |
 | `SORT_ORDER`, `IS_ACTIVE` | Sibling order and visibility flag |
 
+### Shared LANGUAGE and MODULE_OVERVIEW (read-only API)
+
+The `language/model/Language.java` entity maps the shared lookup table
+`LANGUAGE` (`CODE` PK, `NAME`, `IS_ACTIVE`). It contains **only the language list**,
+not translated content. Future localized Knowledge, Quiz, Interview and other
+tables can reference the same `LANGUAGE.CODE` key.
+
+`module_overview/` contains the read-only `ModuleOverview` entity,
+`ModuleOverviewId` composite key and `ModuleOverviewRepository` (lookup only):
+
+| MODULE_OVERVIEW column | Type / meaning |
+| --- | --- |
+| `ID_STRUCTURE` | NUMBER(19), PK part + FK to `MODULE_STRUCTURE.ID_STRUCTURE` |
+| `LANGUAGE_CODE` | VARCHAR2(10 CHAR), PK part + FK to `LANGUAGE.CODE` |
+| `MARKDOWN_CONTENT` | CLOB NOT NULL; raw `content/readme/docs/<lang>/BASE.md` |
+
+`(ID_STRUCTURE, LANGUAGE_CODE)` is the composite primary key. One module may
+have a VI Overview and an EN Overview, or only one of them; **missing locales
+have no row** (do not import empty files). `NODE_KEY` and `SLUG` remain
+language-independent in the single `MODULE_STRUCTURE` tree. The importer must
+require `NODE_TYPE = 'MODULE'`, since the structural FK alone also accepts GROUP.
+
+Run the following manually as the Oracle schema owner **before deploying code
+that maps these entities** (after the existing `01` and `03` scripts):
+
+1. `sql/04_language.sql` — create and seed `LANGUAGE` with `vi`, `en`.
+2. `sql/05_module_overview.sql` — create the localized Overview table and FKs.
+
+Do **not** run either CREATE script twice. There is no `OVERVIEW` column in
+`MODULE_STRUCTURE` and no `04_module_structure_overview.sql` migration.
+Neither script imports Markdown files or changes existing module content.
+The Overview API is implemented in `module_overview/service/ModuleOverviewService.java`
+and `module_overview/controller/ModuleOverviewController.java`:
+
+```http
+GET /api/v1/modules/java-stream-api/overview?lang=vi
+GET /api/v1/modules/java-stream-api/overview?lang=en
+```
+
+Successful response (`200`, JSON):
+
+```json
+{
+  "slug": "java-stream-api",
+  "languageCode": "vi",
+  "markdownContent": "# Stream API\n\nMarkdown nội dung giới thiệu..."
+}
+```
+
+`moduleSlug` is the globally unique `MODULE_STRUCTURE.SLUG` (not `NODE_KEY`).
+`lang` is required and uses `LANGUAGE.CODE` (case-sensitive, e.g. `vi` or `en`).
+The service checks that the node is an active `MODULE` in a visible Topic and
+Category and that all its parents are active, matching tree-navigation
+visibility. The selected language must also be active. Missing module,
+translation, unknown or disabled language yields `404` with **no fallback**;
+omitting `lang` or supplying a blank/oversized code yields `400`. Only GET is
+supported, under the `oracle` profile, with the same CORS origins as the
+Topic/Structure APIs. Keep Overview Markdown out of the tree-navigation JSON:
+it is fetched **only when requested**. Production JPA uses `ddl-auto=none`;
+Oracle DDL remains manual.
+
 `SERVICE_NAME` and `PARENT_ID_STRUCTURE` are intentionally absent. Existing
-module `SERVICE_NAME` values can become `NODE_KEY` values, keeping their public
-`/learning/:topicSlug/knowledge/:nodeKey` URLs unchanged. GROUPs need their own
-stable keys. Changing a node's position changes `PARENT_NODE_KEY`, **not**
-`NODE_KEY`.
+module `SERVICE_NAME` values can become `NODE_KEY` values. The frontend uses
+`SLUG` for `/learning/:topicSlug/knowledge/:moduleSlug` URLs, not `NODE_KEY`.
+GROUPs need their own stable keys. Changing a node's position changes
+`PARENT_NODE_KEY`, **not** `NODE_KEY`.
 
 **Important for importing existing ASCII trees:** names such as `fundamentals`
 appear in many places. Their `SLUG` values cannot all be `fundamentals`: use

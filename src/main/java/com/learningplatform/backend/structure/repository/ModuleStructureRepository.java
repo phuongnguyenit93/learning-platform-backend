@@ -13,6 +13,8 @@ public interface ModuleStructureRepository extends Repository<ModuleStructure, L
 
     Optional<ModuleStructure> findByNodeKey(String nodeKey);
 
+    Optional<ModuleStructure> findBySlug(String slug);
+
     @Query("""
             select n from ModuleStructure n
             where n.topic.id = :topicId
