@@ -6,8 +6,8 @@ server:
   port: ${PORT:8080}
   shutdown: graceful
 
-# Keep the existing health-only deployment working until Oracle credentials
-# and network access are configured. The read-only catalog is opt-in.
+# Keep the Oracle-backed catalog opt-in; without this profile, the app
+# starts without a database connection and exposes no catalog endpoints.
 ---
 spring:
   config:

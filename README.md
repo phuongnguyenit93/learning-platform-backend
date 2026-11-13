@@ -1,19 +1,6 @@
 # learning-platform-backend
 
-Backend Java 21 + Spring Boot 4.1.2 cho Learning Platform. Có Health API và hai GET API Catalog (chỉ đọc từ Oracle khi bật profile `oracle`).
-
-## API test
-
-`GET /api/v1/health`
-
-Response (HTTP 200, `application/json`):
-
-```json
-{
-  "status": "UP",
-  "service": "learning-platform-backend"
-}
-```
+Backend Java 21 + Spring Boot 4.1.2 cho Learning Platform. Có hai GET API Catalog (chỉ đọc từ Oracle khi bật profile `oracle`), cùng model Structure chưa mở API.
 
 ## Chạy local (Windows)
 
@@ -24,10 +11,11 @@ Yêu cầu JDK 21. Sử dụng Gradle Wrapper đi kèm, không cần cài Gradle
 java -jar build\libs\learning-platform-backend.jar
 ```
 
-Mở `http://localhost:8080/api/v1/health` hoặc chạy:
+Để gọi API Catalog, cần bật profile `oracle` và cấu hình kết nối database.
+Ví dụ sau khi đã cấu hình Oracle:
 
 ```powershell
-Invoke-RestMethod http://localhost:8080/api/v1/health
+Invoke-RestMethod http://localhost:8080/api/v1/topics
 ```
 
 Có thể đổi port bằng biến môi trường `PORT`.
@@ -42,13 +30,13 @@ docker build -t learning-platform-backend:local .
 docker run --rm -p 8080:8080 learning-platform-backend:local
 ```
 
-Mở `http://localhost:8080/api/v1/health` để kiểm tra. Base image `eclipse-temurin:21-jre` hỗ trợ ARM64 (Oracle Ampere A1) và x86_64; khi build image trên GitHub Actions cần chọn kiến trúc phù hợp với VPS.
+Khi chạy với profile `oracle` và database đã kết nối, dùng `/api/v1/topics` để kiểm tra API. Base image `eclipse-temurin:21-jre` hỗ trợ ARM64 (Oracle Ampere A1) và x86_64; khi build image trên GitHub Actions cần chọn kiến trúc phù hợp với VPS.
 
 Khi triển khai lên Oracle VPS, chỉ nên cho phép truy cập từ Internet qua HTTPS/reverse proxy; Spring Boot có thể lắng nghe nội bộ ở cổng 8080.
 
 ## Oracle Autonomous Database: Learning Category / Topic (read-only)
 
-Backend implements exactly two JPA entities, organized in
+The Category/Topic catalog uses two JPA entities, organized in
 `catalog/model`, `catalog/repository`, `catalog/service`,
 `catalog/controller` and `catalog/dto` packages:
 
@@ -130,7 +118,6 @@ Nếu trên A1 đã có container cũ tên `learning-platform-backend` chiếm p
 sudo docker stop learning-platform-backend
 sudo docker compose -f compose.yaml up -d
 sudo docker compose -f compose.yaml ps
-curl -fsS http://127.0.0.1:8080/api/v1/health
 curl -fsS http://127.0.0.1:8080/api/v1/categories
 curl -fsS http://127.0.0.1:8080/api/v1/topics
 ```
@@ -152,7 +139,7 @@ Chỉ xóa container cũ sau khi kiểm tra backend mới hoạt động. Khi th
 
 **Giới hạn bảo mật cần hiểu:** đây là *Docker Compose file-backed secrets* cho một VPS, không phải `docker secret create` của Docker Swarm. Dữ liệu bí mật vẫn tồn tại dưới dạng file trên ổ đĩa host, được hạn chế bằng quyền filesystem; người có quyền root/Docker trên VPS vẫn có thể đọc được. Nếu cần secret được quản lý và mã hóa bởi Swarm hoặc secret manager, phải triển khai theo cơ chế khác.
 
-Khi không bật profile `oracle`, Health API vẫn chạy mà không cần database hoặc các file secrets. Khi bật `oracle` mà không có datasource hợp lệ, Spring Boot sẽ không kết nối thành công; `ddl-auto: none` ngăn Hibernate tạo hay sửa bảng.
+Khi không bật profile `oracle`, ứng dụng chạy không cần database hoặc các file secrets, nhưng không có endpoint Catalog. Khi bật `oracle` mà không có datasource hợp lệ, Spring Boot sẽ không kết nối thành công; `ddl-auto: none` ngăn Hibernate tạo hay sửa bảng.
 
 ### Read endpoints
 
@@ -160,8 +147,61 @@ Khi không bật profile `oracle`, Health API vẫn chạy mà không cần data
 | --- | --- | --- |
 | GET | `/api/v1/categories` | Active categories, ordered by category sort order |
 | GET | `/api/v1/topics` | Visible topics with raw SVG and category DTO, ordered by category then topic sort order |
+| GET | `/api/v1/topics/{topicId}/structure` | Nested active Structure nodes for a visible Topic, with children ordered by `SORT_ORDER`, then `ID_STRUCTURE` |
 
 No `lang` parameter or POST, PATCH, PUT or DELETE mapping exists.
+
+### Module Structure (read-only API)
+
+`structure/model/ModuleStructure.java` and `structure/model/StructureType.java` define
+the read-only JPA model for a separate tree per Topic. Create the Oracle table
+manually with `sql/03_module_structure.sql` **after** `sql/01_learning_catalog.sql`.
+It is not automatically applied to Oracle. The Structure endpoint requires
+this table to exist in Oracle before being used.
+
+| Column | Purpose |
+| --- | --- |
+| `ID_STRUCTURE` | Oracle identity primary key, not used to link parents |
+| `TOPIC_ID` | Required FK to `TOPIC.ID`; each node belongs to one Topic |
+| `NODE_KEY` | Required, **globally unique** stable node identifier (GROUP and MODULE) |
+| `PARENT_NODE_KEY` | Nullable parent reference by key, same Topic only; NULL for roots |
+| `NODE_TYPE` | `GROUP` or `MODULE`; MODULE may contain children |
+| `SLUG` | Required, **globally unique** slug, independent of hierarchy |
+| `NAME`, `DESCRIPTION` | Display name and optional description |
+| `SORT_ORDER`, `IS_ACTIVE` | Sibling order and visibility flag |
+
+`SERVICE_NAME` and `PARENT_ID_STRUCTURE` are intentionally absent. Existing
+module `SERVICE_NAME` values can become `NODE_KEY` values, keeping their public
+`/learning/:topicSlug/knowledge/:nodeKey` URLs unchanged. GROUPs need their own
+stable keys. Changing a node's position changes `PARENT_NODE_KEY`, **not**
+`NODE_KEY`.
+
+**Important for importing existing ASCII trees:** names such as `fundamentals`
+appear in many places. Their `SLUG` values cannot all be `fundamentals`: use
+distinct global slugs like `devops-fundamentals` and `database-fundamentals`
+while retaining `NAME = 'fundamentals'`. Do not derive stable `NODE_KEY` values
+solely from paths if nodes may later move.
+
+The Oracle schema enforces global uniqueness and a composite self-FK
+`(TOPIC_ID, PARENT_NODE_KEY)` → `(TOPIC_ID, NODE_KEY)`, so a parent cannot belong
+to another Topic. `FK_MS_PARENT` is `DEFERRABLE INITIALLY IMMEDIATE` to permit
+out-of-order bulk inserts within a transaction when explicitly deferred.
+Validate missing parents, duplicate keys/slugs, and **cycles longer than one
+node** before syncing; relational FKs alone cannot detect all cycles.
+
+`structure/repository/ModuleStructureRepository.java` provides read-only queries
+by node key and Topic. `structure/service` builds the hierarchy in memory from
+`NODE_KEY`/`PARENT_NODE_KEY`; `structure/controller` serves it at
+`GET /api/v1/topics/{topicId}/structure`. The response is a JSON **array of root
+nodes**, each with a recursive `children` array, rather than a flat list. A
+visible Topic with no structure returns `[]`; a missing/hidden Topic or one in
+an inactive Category returns 404. Inactive nodes and all their descendants are
+omitted. This API is read-only and only active under the `oracle` profile.
+
+The structure feature is in its own package, apart from
+the `catalog` package; its `ModuleStructure` entity references `catalog`'s
+`LearningTopic` through the TOPIC foreign key.
+No import job, CRUD endpoint, or production DB write is included.
 
 ```bash
 curl -i 'http://127.0.0.1:8080/api/v1/topics'

@@ -1,4 +1,4 @@
-package com.learningplatform.backend.health;
+package com.learningplatform.backend.config;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
