@@ -1,8 +1,6 @@
 package com.learningplatform.backend.structure.controller;
 
-import java.util.List;
-
-import com.learningplatform.backend.structure.dto.ModuleStructureNodeDto;
+import com.learningplatform.backend.structure.dto.ModuleStructureCatalogDto;
 import com.learningplatform.backend.structure.service.ModuleStructureService;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.MediaType;
@@ -29,7 +27,7 @@ public class ModuleStructureController {
     }
 
     @GetMapping(value = "/{topicId}/structure", produces = MediaType.APPLICATION_JSON_VALUE)
-    public List<ModuleStructureNodeDto> getStructure(@PathVariable Long topicId) {
+    public ModuleStructureCatalogDto getStructure(@PathVariable Long topicId) {
         return service.getStructure(topicId);
     }
 }

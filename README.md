@@ -1,6 +1,6 @@
 # learning-platform-backend
 
-Backend Java 21 + Spring Boot 4.1.2 cho Learning Platform. Có hai GET API Catalog (chỉ đọc từ Oracle khi bật profile `oracle`), cùng model Structure chưa mở API.
+Backend Java 21 + Spring Boot 4.1.2 cho Learning Platform. Có hai GET API Catalog và một GET API Structure (chỉ đọc từ Oracle khi bật profile `oracle`).
 
 ## Chạy local (Windows)
 
@@ -147,7 +147,7 @@ Khi không bật profile `oracle`, ứng dụng chạy không cần database ho�
 | --- | --- | --- |
 | GET | `/api/v1/categories` | Active categories, ordered by category sort order |
 | GET | `/api/v1/topics` | Visible topics with raw SVG and category DTO, ordered by category then topic sort order |
-| GET | `/api/v1/topics/{topicId}/structure` | Nested active Structure nodes for a visible Topic, with children ordered by `SORT_ORDER`, then `ID_STRUCTURE` |
+| GET | `/api/v1/topics/{topicId}/structure` | Frontend-compatible `ModuleCatalog` JSON (`version`, `root`, recursive `children`), ordered by `SORT_ORDER`, then `ID_STRUCTURE` |
 
 No `lang` parameter or POST, PATCH, PUT or DELETE mapping exists.
 
@@ -192,11 +192,63 @@ node** before syncing; relational FKs alone cannot detect all cycles.
 `structure/repository/ModuleStructureRepository.java` provides read-only queries
 by node key and Topic. `structure/service` builds the hierarchy in memory from
 `NODE_KEY`/`PARENT_NODE_KEY`; `structure/controller` serves it at
-`GET /api/v1/topics/{topicId}/structure`. The response is a JSON **array of root
-nodes**, each with a recursive `children` array, rather than a flat list. A
-visible Topic with no structure returns `[]`; a missing/hidden Topic or one in
+`GET /api/v1/topics/{topicId}/structure`. The response matches the **navigation
+tree shape** used by `learning-platform` (`ModuleCatalog`): a single `root`
+wrapper representing the Topic, with all real root GROUP/MODULE nodes inside
+`root.children`. MODULE nodes have `routeId = nodeKey`; GROUP nodes have no
+`routeId`. Each node also carries its stable ID, slug, parent key, sort order,
+and computed hierarchical `path`. The `id` field is `nodeKey` for DB nodes.
+A visible Topic with no structure returns `root.children: []`; a missing/hidden Topic or one in
 an inactive Category returns 404. Inactive nodes and all their descendants are
 omitted. This API is read-only and only active under the `oracle` profile.
+
+For example, given `JAVA_CORE` (GROUP) and `JAVA_STREAM_API` (MODULE):
+
+```json
+{
+  "version": 1,
+  "root": {
+    "id": "topic:10",
+    "name": "Java",
+    "kind": "GROUP",
+    "path": "/module/java",
+    "slug": "java",
+    "description": "Java fundamentals",
+    "children": [
+      {
+        "idStructure": 100,
+        "id": "JAVA_CORE",
+        "name": "core",
+        "kind": "GROUP",
+        "path": "/module/java/java-core",
+        "nodeKey": "JAVA_CORE",
+        "slug": "java-core",
+        "sortOrder": 1,
+        "children": [
+          {
+            "idStructure": 101,
+            "id": "JAVA_STREAM_API",
+            "name": "stream-api",
+            "kind": "MODULE",
+            "routeId": "JAVA_STREAM_API",
+            "path": "/module/java/java-core/java-stream-api",
+            "nodeKey": "JAVA_STREAM_API",
+            "parentNodeKey": "JAVA_CORE",
+            "slug": "java-stream-api",
+            "sortOrder": 1,
+            "children": []
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+This endpoint supplies the **navigation hierarchy**, not module content paths,
+lesson data, or `module-details` metadata. The existing frontend currently
+loads a static `/module-navigation.json`; switching its loader to this API is
+a separate step, as is migration of content APIs to Oracle.
 
 The structure feature is in its own package, apart from
 the `catalog` package; its `ModuleStructure` entity references `catalog`'s

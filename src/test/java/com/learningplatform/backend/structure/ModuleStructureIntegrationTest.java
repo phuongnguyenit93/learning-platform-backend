@@ -150,23 +150,37 @@ class ModuleStructureIntegrationTest {
         insertNode(4, 10, "JAVA_CONCURRENCY", "JAVA_CORE", "java-concurrency", "MODULE", 5);
         insertNode(5, 10, "JAVA_ADVANCE", "JAVA_ROOT", "java-advance", "GROUP", 1);
         insertNode(6, 20, "SPRING_ROOT", null, "spring-root", "GROUP", 0);
+        insertNode(7, 10, "JAVA_VERSION", null, "java-version", "GROUP", 2);
 
         mvc.perform(get("/api/v1/topics/10/structure"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].nodeKey").value("JAVA_ROOT"))
-                .andExpect(jsonPath("$[0].parentNodeKey").isEmpty())
-                .andExpect(jsonPath("$[0].type").value("GROUP"))
-                .andExpect(jsonPath("$[0].children[0].nodeKey").value("JAVA_ADVANCE"))
-                .andExpect(jsonPath("$[0].children[1].nodeKey").value("JAVA_CORE"))
-                .andExpect(jsonPath("$[0].children[1].children[0].nodeKey").value("JAVA_CONCURRENCY"))
-                .andExpect(jsonPath("$[0].children[1].children[1].nodeKey").value("JAVA_STREAM_API"))
-                .andExpect(jsonPath("$[0].children[1].children[1].slug").value("java-stream-api"))
-                .andExpect(jsonPath("$[0].children[1].children[1].children.length()").value(0));
+                .andExpect(jsonPath("$.version").value(1))
+                .andExpect(jsonPath("$.root.id").value("topic:10"))
+                .andExpect(jsonPath("$.root.name").value("Java"))
+                .andExpect(jsonPath("$.root.kind").value("GROUP"))
+                .andExpect(jsonPath("$.root.routeId").doesNotExist())
+                .andExpect(jsonPath("$.root.children.length()").value(2))
+                .andExpect(jsonPath("$.root.children[0].id").value("JAVA_ROOT"))
+                .andExpect(jsonPath("$.root.children[0].nodeKey").value("JAVA_ROOT"))
+                .andExpect(jsonPath("$.root.children[0].parentNodeKey").doesNotExist())
+                .andExpect(jsonPath("$.root.children[0].routeId").doesNotExist())
+                .andExpect(jsonPath("$.root.children[0].kind").value("GROUP"))
+                .andExpect(jsonPath("$.root.children[0].children[0].nodeKey").value("JAVA_ADVANCE"))
+                .andExpect(jsonPath("$.root.children[0].children[1].nodeKey").value("JAVA_CORE"))
+                .andExpect(jsonPath("$.root.children[0].children[1].children[0].nodeKey").value("JAVA_CONCURRENCY"))
+                .andExpect(jsonPath("$.root.children[0].children[1].children[0].routeId").value("JAVA_CONCURRENCY"))
+                .andExpect(jsonPath("$.root.children[0].children[1].children[0].kind").value("MODULE"))
+                .andExpect(jsonPath("$.root.children[0].children[1].children[0].path").value("/module/java/java-root/java-core/java-concurrency"))
+                .andExpect(jsonPath("$.root.children[0].children[1].children[1].nodeKey").value("JAVA_STREAM_API"))
+                .andExpect(jsonPath("$.root.children[0].children[1].children[1].slug").value("java-stream-api"))
+                .andExpect(jsonPath("$.root.children[0].children[1].children[1].children.length()").value(0))
+                .andExpect(jsonPath("$.root.children[1].nodeKey").value("JAVA_VERSION"));
 
         mvc.perform(get("/api/v1/topics/20/structure"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].nodeKey").value("SPRING_ROOT"));
+                .andExpect(jsonPath("$.root.name").value("Spring"))
+                .andExpect(jsonPath("$.root.children[0].nodeKey").value("SPRING_ROOT"))
+                .andExpect(jsonPath("$.root.children.length()").value(1));
     }
 
     @Test
@@ -178,15 +192,16 @@ class ModuleStructureIntegrationTest {
 
         mvc.perform(get("/api/v1/topics/10/structure"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].nodeKey").value("JAVA_ROOT"))
-                .andExpect(jsonPath("$[0].children.length()").value(0));
+                .andExpect(jsonPath("$.root.children[0].nodeKey").value("JAVA_ROOT"))
+                .andExpect(jsonPath("$.root.children[0].children.length()").value(0));
     }
 
     @Test
     void distinguishesEmptyVisibleTopicFromMissingOrHiddenTopic() throws Exception {
         mvc.perform(get("/api/v1/topics/10/structure"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(0));
+                .andExpect(jsonPath("$.version").value(1))
+                .andExpect(jsonPath("$.root.children.length()").value(0));
         mvc.perform(get("/api/v1/topics/999/structure"))
                 .andExpect(status().isNotFound());
 
