@@ -321,3 +321,144 @@ curl -i 'http://127.0.0.1:8080/api/v1/topics'
 ```
 
 Spring Data JPA uses Oracle JDBC, Hibernate, and HikariCP (maximum five DB connections). For local and CI integration tests, an in-memory H2 database is used; no production Oracle schema or data is modified by the test suite.
+
+### MODULE_ROADMAP (read-only, one row per milestone)
+
+The `roadmap/` package provides JPA Entity, Repository, Service, Controller and DTOs.
+Run `sql/06_module_roadmap.sql` **once manually** as the Oracle schema owner after
+`sql/03_module_structure.sql` and `sql/04_language.sql`.
+The application uses `spring.jpa.hibernate.ddl-auto=none` and never creates this table.
+
+| Column | Oracle type | Meaning |
+| --- | --- | --- |
+| `ID_ROADMAP` | `NUMBER(19)` IDENTITY PK | Technical ID for one milestone |
+| `ID_STRUCTURE` | `NUMBER(19)` NOT NULL FK | Existing module node |
+| `LANGUAGE_CODE` | `VARCHAR2(10 CHAR)` NOT NULL FK | Existing language |
+| `TITLE` | `VARCHAR2(300 CHAR)` NOT NULL | Milestone title |
+| `PURPOSE` | `VARCHAR2(1000 CHAR)` NOT NULL | Learning purpose |
+| `OBJECTIVE` | `VARCHAR2(2000 CHAR)` nullable | One objective per line |
+| `SORT_ORDER` | `NUMBER(10)` NOT NULL | Display order |
+
+There is **no** `MILESTONE_KEY`, `@EmbeddedId`, or additional UNIQUE constraint
+on `SORT_ORDER`. Equal sort orders are resolved by `ID_ROADMAP`.
+An index on `(ID_STRUCTURE, LANGUAGE_CODE, SORT_ORDER, ID_ROADMAP)` supports
+the localized, ordered read query.
+
+```http
+GET /api/v1/modules/java-oop/roadmap?lang=vi
+```
+
+Example successful response:
+
+```json
+{
+  "slug": "java-oop",
+  "languageCode": "vi",
+  "roadmap": [
+    {
+      "id": 1,
+      "title": "Tư duy OOP",
+      "purpose": "Hiểu cách mô hình hóa bài toán bằng đối tượng.",
+      "objectives": [
+        "Nhận diện đối tượng và trách nhiệm.",
+        "Mô tả tương tác giữa các đối tượng."
+      ],
+      "sortOrder": 1
+    }
+  ]
+}
+```
+
+The DB stores `OBJECTIVE` as newline-separated plain text, and the service
+splits non-blank lines into the `objectives` JSON array. Empty `OBJECTIVE`
+returns `[]`. This API does not read or write the original YAML.
+As with Overview, `lang` is mandatory; invalid language parameters return
+400; a nonexistent/hidden module, inactive parent, hidden topic/category,
+missing/disabled translation, or no milestones returns 404 without fallback.
+Only GET is exposed under the `oracle` profile; the module tree stays lightweight.
+
+Since YAML milestone IDs are intentionally discarded, repeated imports
+cannot upsert milestones by key. An importer should replace the given
+module/language's milestones when reimporting; generated `ID_ROADMAP` values
+may change, so do not attach durable external references unless the import
+strategy changes. Import only `NODE_TYPE = 'MODULE'` content, ensure the
+language exists, validate required fields and VARCHAR2 byte limits, and
+preserve YAML array order in `SORT_ORDER`. Oracle `VARCHAR2` remains
+limited by `MAX_STRING_SIZE` (normally 4000 bytes with STANDARD) even with
+CHAR semantics.
+
+For a separate Oracle application user, grant `SELECT` on the new table:
+
+```sql
+GRANT SELECT ON LEARNING_PLATFORM.MODULE_ROADMAP TO LEARNING_READ;
+```
+
+Tests: `src/test/java/com/learningplatform/backend/roadmap/ModuleRoadmapIntegrationTest.java`
+runs with the H2 test datasource using `ddl-auto=create-drop`; production
+still uses manual SQL creation.
+
+### MODULE_REFERENCE (read-only API; one row per reference link)
+
+Create `MODULE_REFERENCE` manually by running `sql/07_module_reference.sql` as
+the Oracle schema owner, after `03_module_structure.sql` and `04_language.sql`.
+This DDL is **not** executed by Spring Boot (production `ddl-auto=none`).
+If a separate app read user is used, grant it SELECT on MODULE_REFERENCE.
+
+| Column | Type | Purpose |
+| --- | --- | --- |
+| ID_REFERENCE | NUMBER(19) IDENTITY PK | Technical reference row identifier |
+| ID_STRUCTURE | NUMBER(19) NOT NULL FK | Existing MODULE_STRUCTURE node |
+| LANGUAGE_CODE | VARCHAR2(10 CHAR) NOT NULL FK | Existing language |
+| TITLE | VARCHAR2(300 CHAR) NOT NULL | Display title |
+| URL | VARCHAR2(2000 CHAR) NOT NULL | Absolute HTTPS URL (import validation) |
+| DESCRIPTION | VARCHAR2(1000 CHAR) nullable | Optional description |
+| SORT_ORDER | NUMBER(10) NOT NULL | Original YAML entry order |
+
+No composite ID, milestone/reference business key, URL uniqueness, CLOB, or
+`SORT_ORDER` uniqueness. Index `IX_MREF_MODULE_LANG_SORT` supports ordered
+queries by `ID_STRUCTURE` and `LANGUAGE_CODE`.
+
+`reference/` contains `ModuleReference` (immutable JPA model),
+`ModuleReferenceRepository` (read-only queries), `ModuleReferenceService`,
+`ModuleReferenceController`, and two DTO records.
+
+```http
+GET /api/v1/modules/java-oop/reference?lang=vi
+```
+
+Example 200 response:
+
+```json
+{
+  "slug": "java-oop",
+  "languageCode": "vi",
+  "references": [
+    {
+      "id": 101,
+      "title": "Java Language Specification",
+      "url": "https://docs.oracle.com/javase/specs/",
+      "description": "Official Java specification.",
+      "sortOrder": 1
+    }
+  ]
+}
+```
+
+The endpoint behaves like Overview/Roadmap: it requires `lang`, returns 400
+for blank/oversized language codes, 404 for missing/disabled translations,
+absent rows, hidden MODULE/GROUP, inactive ancestors, hidden Topics or
+inactive Categories. There is **no language fallback**. Null descriptions
+are exposed as empty strings to match the frontend Reference item type.
+References are fetched separately from the navigation tree. Only GET is
+exposed, with the existing `oracle` profile and CORS origins.
+
+The importer lives in `java-learning/scripts/import-module-references.py`,
+supports offline/connected dry-run and explicit `--apply` with atomic
+replace per module/language. It skips empty `references: []` skeletons.
+Imported content must be verified as HTTPS and fit VARCHAR2 limits.
+When a list changes, replacement regenerates `ID_REFERENCE` values.
+The frontend currently uses published YAML via `ReferencePanel` and still
+needs separate integration work to fetch this API and expose tab availability.
+
+Tests: `src/test/java/com/learningplatform/backend/reference/ModuleReferenceIntegrationTest.java`
+use H2 with `ddl-auto=create-drop`, not production Oracle.
