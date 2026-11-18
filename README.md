@@ -36,20 +36,22 @@ Khi triển khai lên Oracle VPS, chỉ nên cho phép truy cập từ Internet 
 
 ## Oracle Autonomous Database: Learning Category / Topic (read-only)
 
-The Category/Topic catalog uses two JPA entities, organized in
-`catalog/model`, `catalog/repository`, `catalog/service`,
-`catalog/controller` and `catalog/dto` packages:
+The catalog is split into the `category/` and `topic/` domain packages. Each
+contains its own model, repository, service, controller and DTO where needed.
 
 | Table | Important columns | Notes |
 | --- | --- | --- |
 | `CATEGORY` | `ID`, `CODE`, `NAME`, `SORT_ORDER`, `IS_ACTIVE` | One category can own many topics. No translation or description columns. |
 | `TOPIC` | `ID`, `CATEGORY_ID`, `CODE`, `SLUG`, `NAME`, `DESCRIPTION`, `ICON_SVG`, `STATUS`, `SORT_ORDER` | `CATEGORY_ID` is a database FK and `@ManyToOne(fetch = LAZY)` in Java. |
+| `TOPIC_GROUP` | `ID`, `TOPIC_ID`, `GROUP_NAME`, `SLUG`, `PARENT_GROUP_ID`, `SORT_ORDER`, `IS_ACTIVE` | Recursive groups belong to one Topic; `SLUG` is unique within its Topic. |
+| `TOPIC_GROUP_MODULE` | `ID`, `GROUP_ID`, `TOPIC_ID`, `MODULE_ID`, `SORT_ORDER`, `IS_ACTIVE` | Places a Module either inside one Group or directly under one Topic. |
 
 - `NAME` / `DESCRIPTION` are single, language-neutral application-managed values (no `lang` parameter, no translation table).
 - `SLUG` is used by the frontend for navigation; no database `ROUTE_PATH`.
-- `ICON_SVG` is an Oracle `CLOB` containing a **complete SVG document** (`<svg ...>...</svg>`), including `viewBox`. The GET API returns it as the `iconSvg` JSON string, so the logo can be changed in Oracle without redeploying the backend/frontend.
-- **Security:** SVG markup is active content. Before displaying `iconSvg` as inline SVG in React, sanitize with a SVG-aware sanitizer such as DOMPurify (SVG profile), disallow scripts, event handlers, foreignObject and external resources. Never inject raw database SVG directly with `dangerouslySetInnerHTML`. The FE is not switched to database logos in this backend-only change.
+- `ICON_SVG` is a nullable Oracle `CLOB`; when present it contains a **complete SVG document** (`<svg ...>...</svg>`), including `viewBox`. The GET API returns it as `iconSvg` (string or `null`).
+- **Security:** SVG markup is active content. The frontend sanitizes it with DOMPurify's SVG profile and uses it as an image resource. Never inject raw database SVG directly with `dangerouslySetInnerHTML`.
 - `STATUS`: `AVAILABLE`, `COMING_SOON`, `HIDDEN`. The read API excludes hidden topics and topics in inactive categories.
+- Group slugs are unique per Topic; Module slugs are globally unique. The Topic Structure service also rejects a Group/Module slug collision within the visible tree.
 - Both Entities are Hibernate `@Immutable`. Repositories expose only read methods; service queries use read-only transactions. There is **no REST create/update/delete** endpoint. This is not a substitute for database authorization: use a SELECT-only DB user if strict DB-level enforcement is required.
 
 ### Prepare tables manually
@@ -147,129 +149,190 @@ Khi không bật profile `oracle`, ứng dụng chạy không cần database ho�
 | --- | --- | --- |
 | GET | `/api/v1/categories` | Active categories, ordered by category sort order |
 | GET | `/api/v1/topics` | Visible topics with raw SVG and category DTO, ordered by category then topic sort order |
-| GET | `/api/v1/topics/{topicId}/structure` | Frontend-compatible `ModuleCatalog` JSON (`version`, `root`, recursive `children`), ordered by `SORT_ORDER`, then `ID_STRUCTURE` |
+| GET | `/api/v1/topics/{topicId}/structure` | Frontend-compatible `ModuleCatalog` JSON (`version`, `root`, recursive `children`), ordered by `SORT_ORDER` and stable database IDs |
+| GET | `/api/v1/modules/{moduleSlug}` | Core Module metadata resolved by its public `SLUG` |
+| GET | `/api/v1/modules/{moduleSlug}/overview?lang=vi` | One localized Overview Markdown document |
+| GET | `/api/v1/modules/{moduleSlug}/roadmap?lang=vi` | Ordered localized Roadmap milestones |
+| GET | `/api/v1/modules/{moduleSlug}/reference?lang=vi` | Ordered localized Reference links |
+| GET | `/api/v1/modules/{moduleSlug}/menu?lang=vi` | Localized Chapter/Section tree with lightweight lesson availability |
+| GET | `/api/v1/modules/{moduleSlug}/knowledge/{chapterSlug}/{sectionSlug}?lang=vi` | Fully written, localized Markdown lesson and QA metadata |
+| GET | `/api/v1/modules/{moduleSlug}/chapters/{chapterSlug}/insights?lang=vi` | Comparison fields of published Chapter lessons without CLOBs |
 
-No `lang` parameter or POST, PATCH, PUT or DELETE mapping exists.
+Category, Topic and Topic Structure do not take a `lang` parameter; localized
+Module Overview/Roadmap/Reference/Menu/Knowledge/Insights endpoints require
+`lang`. No POST, PATCH, PUT or DELETE mapping exists.
 
-### Module Structure (read-only API)
+### Topic Structure (read-only API)
 
-`structure/model/ModuleStructure.java` and `structure/model/StructureType.java` define
-the read-only JPA model for a separate tree per Topic. Create the Oracle table
-manually with `sql/03_module_structure.sql` **after** `sql/01_learning_catalog.sql`.
-It is not automatically applied to Oracle. The Structure endpoint requires
-this table to exist in Oracle before being used.
+The Topic navigation tree is assembled from the current domain tables; it does
+**not** use the former standalone `MODULE_STRUCTURE` table:
+
+- `TOPIC_GROUP` stores recursive Group hierarchy through `PARENT_GROUP_ID`.
+- `TOPIC_GROUP_MODULE` places each Module either in a Group (`GROUP_ID`) or
+  directly under a Topic (`TOPIC_ID`). Its check constraint requires exactly
+  one of those two placements.
+- `MODULE` supplies the Module's stable `SERVICE_NAME`, public `SLUG`, display
+  `NAME` and optional `SERVICE_NAME_DESCRIPTION`.
+- Group `SLUG` was added to existing Oracle databases by
+  `sql/21_topic_group_slug.sql`; `sql/10.sql` includes it for new table creation.
+
+The API builds the tree in memory. A Group node uses `GROUP_<ID>` as its stable
+`nodeKey`; a Module node uses `MODULE.SERVICE_NAME`. `SLUG` is the public URL
+identifier and is never substituted with `nodeKey`. The response's `path` is a
+computed hierarchy path such as `/module/java/java-core/java-stream-api`.
+Modules are leaves; Groups may contain nested Groups and Modules. Siblings are
+ordered by `SORT_ORDER`, with a deterministic Group-before-Module tie-break.
+
+Inactive Groups hide their entire descendant subtree. Inactive placements and
+Modules are omitted. A visible Topic with no active structure returns
+`root.children: []`; a missing/hidden Topic or one in an inactive Category
+returns 404. The service validates same-Topic parent links, cycles, blank or
+unsafe slugs, and duplicate visible node keys/slugs before returning the tree.
+The API is read-only and only active under the `oracle` profile. All module
+content tables reference the canonical `MODULE.ID`, not the Topic Group
+placement row. Moving a Module to another Group or Topic therefore does not
+change its Overview, Roadmap or Reference ownership.
+
+### Module Core, Overview, Roadmap and Reference (read-only APIs)
+
+`MODULE` is the language-independent identity and metadata table:
 
 | Column | Purpose |
 | --- | --- |
-| `ID_STRUCTURE` | Oracle identity primary key, not used to link parents |
-| `TOPIC_ID` | Required FK to `TOPIC.ID`; each node belongs to one Topic |
-| `NODE_KEY` | Required, **globally unique** stable node identifier (GROUP and MODULE) |
-| `PARENT_NODE_KEY` | Nullable parent reference by key, same Topic only; NULL for roots |
-| `NODE_TYPE` | `GROUP` or `MODULE`; MODULE may contain children |
-| `SLUG` | Required, **globally unique** slug, independent of hierarchy |
-| `NAME`, `DESCRIPTION` | Display name and optional description |
-| `SORT_ORDER`, `IS_ACTIVE` | Sibling order and visibility flag |
+| `ID` | Canonical database identity and FK target for Module content |
+| `SERVICE_NAME` | Stable internal key, migrated from the old navigation `NODE_KEY` |
+| `SLUG` | Globally unique public identifier used by frontend routes and API requests |
+| `NAME` | Display name |
+| `SERVICE_NAME_DESCRIPTION` | Module description |
+| `SPECIAL_NOTE` | Nullable module metadata |
+| `IS_ACTIVE` | Module visibility switch |
 
-### Shared LANGUAGE and MODULE_OVERVIEW (read-only API)
+`MODULE` intentionally has no `TOPIC_ID` or `SORT_ORDER`. Current placement is
+owned by `TOPIC_GROUP_MODULE`, with exactly one of `GROUP_ID` or `TOPIC_ID`
+populated and one placement per Module. Topic Group ancestry stays in
+`TOPIC_GROUP`.
 
-The `language/model/Language.java` entity maps the shared lookup table
-`LANGUAGE` (`CODE` PK, `NAME`, `IS_ACTIVE`). It contains **only the language list**,
-not translated content. Future localized Knowledge, Quiz, Interview and other
-tables can reference the same `LANGUAGE.CODE` key.
+The read-only Module Core endpoint returns:
 
-`module_overview/` contains the read-only `ModuleOverview` entity,
-`ModuleOverviewId` composite key and `ModuleOverviewRepository` (lookup only):
+```http
+GET /api/v1/modules/java-stream-api
+```
 
-| MODULE_OVERVIEW column | Type / meaning |
-| --- | --- |
-| `ID_STRUCTURE` | NUMBER(19), PK part + FK to `MODULE_STRUCTURE.ID_STRUCTURE` |
-| `LANGUAGE_CODE` | VARCHAR2(10 CHAR), PK part + FK to `LANGUAGE.CODE` |
-| `MARKDOWN_CONTENT` | CLOB NOT NULL; raw `content/readme/docs/<lang>/BASE.md` |
+```json
+{
+  "id": 100,
+  "serviceName": "JAVA_STREAM_API",
+  "slug": "java-stream-api",
+  "name": "Java Stream API",
+  "description": "Learn the Java Stream API",
+  "specialNote": null
+}
+```
 
-`(ID_STRUCTURE, LANGUAGE_CODE)` is the composite primary key. One module may
-have a VI Overview and an EN Overview, or only one of them; **missing locales
-have no row** (do not import empty files). `NODE_KEY` and `SLUG` remain
-language-independent in the single `MODULE_STRUCTURE` tree. The importer must
-require `NODE_TYPE = 'MODULE'`, since the structural FK alone also accepts GROUP.
-
-Run the following manually as the Oracle schema owner **before deploying code
-that maps these entities** (after the existing `01` and `03` scripts):
-
-1. `sql/04_language.sql` — create and seed `LANGUAGE` with `vi`, `en`.
-2. `sql/05_module_overview.sql` — create the localized Overview table and FKs.
-
-Do **not** run either CREATE script twice. There is no `OVERVIEW` column in
-`MODULE_STRUCTURE` and no `04_module_structure_overview.sql` migration.
-Neither script imports Markdown files or changes existing module content.
-The Overview API is implemented in `module_overview/service/ModuleOverviewService.java`
-and `module_overview/controller/ModuleOverviewController.java`:
+Localized content remains separate and is fetched only when its tab is opened:
 
 ```http
 GET /api/v1/modules/java-stream-api/overview?lang=vi
-GET /api/v1/modules/java-stream-api/overview?lang=en
+GET /api/v1/modules/java-stream-api/roadmap?lang=vi
+GET /api/v1/modules/java-stream-api/reference?lang=vi
 ```
 
-Successful response (`200`, JSON):
+Overview response:
 
 ```json
 {
   "slug": "java-stream-api",
   "languageCode": "vi",
-  "markdownContent": "# Stream API\n\nMarkdown nội dung giới thiệu..."
+  "markdownContent": "# Stream API\n\nMarkdown content..."
 }
 ```
 
-`moduleSlug` is the globally unique `MODULE_STRUCTURE.SLUG` (not `NODE_KEY`).
-`lang` is required and uses `LANGUAGE.CODE` (case-sensitive, e.g. `vi` or `en`).
-The service checks that the node is an active `MODULE` in a visible Topic and
-Category and that all its parents are active, matching tree-navigation
-visibility. The selected language must also be active. Missing module,
-translation, unknown or disabled language yields `404` with **no fallback**;
-omitting `lang` or supplying a blank/oversized code yields `400`. Only GET is
-supported, under the `oracle` profile, with the same CORS origins as the
-Topic/Structure APIs. Keep Overview Markdown out of the tree-navigation JSON:
-it is fetched **only when requested**. Production JPA uses `ddl-auto=none`;
-Oracle DDL remains manual.
+Roadmap response:
 
-`SERVICE_NAME` and `PARENT_ID_STRUCTURE` are intentionally absent. Existing
-module `SERVICE_NAME` values can become `NODE_KEY` values. The frontend uses
-`SLUG` for `/learning/:topicSlug/knowledge/:moduleSlug` URLs, not `NODE_KEY`.
-GROUPs need their own stable keys. Changing a node's position changes
-`PARENT_NODE_KEY`, **not** `NODE_KEY`.
+```json
+{
+  "slug": "java-stream-api",
+  "languageCode": "vi",
+  "roadmap": [
+    {
+      "id": 400,
+      "title": "Nền tảng",
+      "purpose": "Nắm vững nền tảng",
+      "objectives": ["Hiểu Stream API", "Thực hành pipeline"],
+      "sortOrder": 1
+    }
+  ]
+}
+```
 
-**Important for importing existing ASCII trees:** names such as `fundamentals`
-appear in many places. Their `SLUG` values cannot all be `fundamentals`: use
-distinct global slugs like `devops-fundamentals` and `database-fundamentals`
-while retaining `NAME = 'fundamentals'`. Do not derive stable `NODE_KEY` values
-solely from paths if nodes may later move.
+Each nonblank line in `MODULE_ROADMAP_LANGUAGE.OBJECTIVE` becomes one
+`objectives[]` entry. Milestones are ordered by `SORT_ORDER`, then database ID.
 
-The Oracle schema enforces global uniqueness and a composite self-FK
-`(TOPIC_ID, PARENT_NODE_KEY)` → `(TOPIC_ID, NODE_KEY)`, so a parent cannot belong
-to another Topic. `FK_MS_PARENT` is `DEFERRABLE INITIALLY IMMEDIATE` to permit
-out-of-order bulk inserts within a transaction when explicitly deferred.
-Validate missing parents, duplicate keys/slugs, and **cycles longer than one
-node** before syncing; relational FKs alone cannot detect all cycles.
+Reference response:
 
-`structure/repository/ModuleStructureRepository.java` provides read-only queries
-by node key and Topic. `structure/service` builds the hierarchy in memory from
-`NODE_KEY`/`PARENT_NODE_KEY`; `structure/controller` serves it at
-`GET /api/v1/topics/{topicId}/structure`. The response matches the **navigation
-tree shape** used by `learning-platform` (`ModuleCatalog`): a single `root`
-wrapper representing the Topic, with all real root GROUP/MODULE nodes inside
-`root.children`. MODULE nodes have `routeId = nodeKey`; GROUP nodes have no
-`routeId`. Each node also carries its stable ID, slug, parent key, sort order,
-and computed hierarchical `path`. The `id` field is `nodeKey` for DB nodes.
-A visible Topic with no structure returns `root.children: []`; a missing/hidden Topic or one in
-an inactive Category returns 404. Inactive nodes and all their descendants are
-omitted. This API is read-only and only active under the `oracle` profile.
+```json
+{
+  "slug": "java-stream-api",
+  "languageCode": "vi",
+  "references": [
+    {
+      "id": 500,
+      "title": "Oracle Docs",
+      "url": "https://docs.oracle.com/",
+      "description": "Official documentation",
+      "sortOrder": 1
+    }
+  ]
+}
+```
 
-For example, given `JAVA_CORE` (GROUP) and `JAVA_STREAM_API` (MODULE):
+Reference URLs must be absolute HTTPS URLs without embedded credentials. Items
+are ordered by `SORT_ORDER`, then database ID.
+
+The current table ownership is:
+
+| Table | Ownership |
+| --- | --- |
+| `MODULE_OVERVIEW` | One Markdown CLOB per `(MODULE_ID, LANGUAGE_CODE)` |
+| `MODULE_ROADMAP` | Language-independent `ROADMAP_KEY`, ordering and active flag per Module |
+| `MODULE_ROADMAP_LANGUAGE` | Localized milestone title, purpose and newline-delimited objectives |
+| `MODULE_REFERENCE` | Language-independent URL, ordering and active flag per Module |
+| `MODULE_REFERENCE_LANGUAGE` | Localized reference title and description |
+| `LANGUAGE` | Shared active language lookup referenced by localized rows |
+
+The corresponding Oracle DDL is maintained in `sql/09.sql` and `sql/12.sql`
+through `sql/16.sql`; `sql/04_language.sql` creates the shared Language table.
+These are manual schema scripts; do not execute CREATE scripts twice. Spring
+Boot uses `ddl-auto=none` and never mutates production Oracle schema.
+
+All four Module endpoints share the same visibility rule: the Module must be
+active, have an active placement, belong to a Topic that is not `HIDDEN` and
+whose Category is active, and (when placed in a Group) every Group ancestor
+must be active and belong to that same Topic. A direct Topic placement is also
+supported. An invisible or unplaced Module returns `404` for Core and all
+content endpoints.
+
+`lang` is required and uses an active `LANGUAGE.CODE`. The API checks actual
+stored translations rather than assuming that a Module supports every active
+language. Missing Overview, Roadmap or Reference translations return `404`;
+there is **no locale fallback**. Missing `lang`, a blank value or a code longer
+than 10 characters returns `400`; an unknown or disabled language returns
+`404`. The endpoints use the same CORS origins as Category/Topic/Structure.
+
+`learning-platform` maps `nodeKey` to its internal tree identity and maps
+`slug` to the web route (`routeId`). The API intentionally does not send the
+legacy `routeId = nodeKey` field, preventing the internal key from becoming a
+public URL.
+
+For example, a Group `ID=200` containing Group `ID=201`, which contains Module
+`SERVICE_NAME=JAVA_STREAM_API`, is returned in this shape:
 
 ```json
 {
   "version": 1,
   "root": {
     "id": "topic:10",
+    "nodeKey": "TOPIC_10",
     "name": "Java",
     "kind": "GROUP",
     "path": "/module/java",
@@ -277,27 +340,35 @@ For example, given `JAVA_CORE` (GROUP) and `JAVA_STREAM_API` (MODULE):
     "description": "Java fundamentals",
     "children": [
       {
-        "idStructure": 100,
-        "id": "JAVA_CORE",
-        "name": "core",
+        "id": "GROUP_200",
+        "nodeKey": "GROUP_200",
+        "name": "Java Core",
         "kind": "GROUP",
         "path": "/module/java/java-core",
-        "nodeKey": "JAVA_CORE",
         "slug": "java-core",
         "sortOrder": 1,
         "children": [
           {
-            "idStructure": 101,
-            "id": "JAVA_STREAM_API",
-            "name": "stream-api",
-            "kind": "MODULE",
-            "routeId": "JAVA_STREAM_API",
-            "path": "/module/java/java-core/java-stream-api",
-            "nodeKey": "JAVA_STREAM_API",
-            "parentNodeKey": "JAVA_CORE",
-            "slug": "java-stream-api",
+            "id": "GROUP_201",
+            "nodeKey": "GROUP_201",
+            "name": "Java Streams",
+            "kind": "GROUP",
+            "path": "/module/java/java-core/java-streams",
+            "slug": "java-streams",
             "sortOrder": 1,
-            "children": []
+            "children": [
+              {
+                "id": "JAVA_STREAM_API",
+                "nodeKey": "JAVA_STREAM_API",
+                "name": "Java Stream API",
+                "kind": "MODULE",
+                "path": "/module/java/java-core/java-streams/java-stream-api",
+                "slug": "java-stream-api",
+                "description": "Java Stream API description",
+                "sortOrder": 1,
+                "children": []
+              }
+            ]
           }
         ]
       }
@@ -306,15 +377,14 @@ For example, given `JAVA_CORE` (GROUP) and `JAVA_STREAM_API` (MODULE):
 }
 ```
 
-This endpoint supplies the **navigation hierarchy**, not module content paths,
-lesson data, or `module-details` metadata. The existing frontend currently
-loads a static `/module-navigation.json`; switching its loader to this API is
-a separate step, as is migration of content APIs to Oracle.
+This endpoint supplies the **navigation hierarchy**, not module lesson content
+or Knowledge menu metadata. Module Core, Overview, Roadmap and Reference are
+separate APIs; the frontend loads Core when a Module is selected and fetches
+localized tab content only when the corresponding tab is opened.
 
-The structure feature is in its own package, apart from
-the `catalog` package; its `ModuleStructure` entity references `catalog`'s
-`LearningTopic` through the TOPIC foreign key.
-No import job, CRUD endpoint, or production DB write is included.
+Category and Topic Structure are implemented in the `category/` and `topic/`
+domain packages. No import job, CRUD endpoint, or production DB write is
+included in this read-only API.
 
 ```bash
 curl -i 'http://127.0.0.1:8080/api/v1/topics'
@@ -322,143 +392,94 @@ curl -i 'http://127.0.0.1:8080/api/v1/topics'
 
 Spring Data JPA uses Oracle JDBC, Hibernate, and HikariCP (maximum five DB connections). For local and CI integration tests, an in-memory H2 database is used; no production Oracle schema or data is modified by the test suite.
 
-### MODULE_ROADMAP (read-only, one row per milestone)
+### Roadmap and Reference implementation notes
 
-The `roadmap/` package provides JPA Entity, Repository, Service, Controller and DTOs.
-Run `sql/06_module_roadmap.sql` **once manually** as the Oracle schema owner after
-`sql/03_module_structure.sql` and `sql/04_language.sql`.
-The application uses `spring.jpa.hibernate.ddl-auto=none` and never creates this table.
+The current `MODULE_ROADMAP` / `MODULE_ROADMAP_LANGUAGE` and
+`MODULE_REFERENCE` / `MODULE_REFERENCE_LANGUAGE` ownership, DTOs, ordering,
+language behavior, and public endpoints are documented in
+**Module Core, Overview, Roadmap and Reference (read-only APIs)** above.
+Do not use the retired `ID_STRUCTURE`-based `sql/06_module_roadmap.sql` or
+`sql/07_module_reference.sql` model for new imports or API changes.
 
-| Column | Oracle type | Meaning |
-| --- | --- | --- |
-| `ID_ROADMAP` | `NUMBER(19)` IDENTITY PK | Technical ID for one milestone |
-| `ID_STRUCTURE` | `NUMBER(19)` NOT NULL FK | Existing module node |
-| `LANGUAGE_CODE` | `VARCHAR2(10 CHAR)` NOT NULL FK | Existing language |
-| `TITLE` | `VARCHAR2(300 CHAR)` NOT NULL | Milestone title |
-| `PURPOSE` | `VARCHAR2(1000 CHAR)` NOT NULL | Learning purpose |
-| `OBJECTIVE` | `VARCHAR2(2000 CHAR)` nullable | One objective per line |
-| `SORT_ORDER` | `NUMBER(10)` NOT NULL | Display order |
+The current implementations live under:
 
-There is **no** `MILESTONE_KEY`, `@EmbeddedId`, or additional UNIQUE constraint
-on `SORT_ORDER`. Equal sort orders are resolved by `ID_ROADMAP`.
-An index on `(ID_STRUCTURE, LANGUAGE_CODE, SORT_ORDER, ID_ROADMAP)` supports
-the localized, ordered read query.
+- `module/roadmap/{model,repository,service,controller,dto}`
+- `module/reference/{model,repository,service,controller,dto}`
+- `module/overview/{model,repository,service,controller,dto}`
+- `module/core/{model,repository,service,controller,dto}`
 
-```http
-GET /api/v1/modules/java-oop/roadmap?lang=vi
-```
+The integration test `DomainModelMappingIntegrationTest` uses H2 with
+`ddl-auto=create-drop`; it verifies the current Module/placement/content
+ownership and the read-only HTTP contracts. Production Oracle remains
+`ddl-auto=none` and is never changed by the test suite.
 
-Example successful response:
+### MODULE_MENU and MODULE_KNOWLEDGE (read-only Knowledge APIs)
 
-```json
-{
-  "slug": "java-oop",
-  "languageCode": "vi",
-  "roadmap": [
-    {
-      "id": 1,
-      "title": "Tư duy OOP",
-      "purpose": "Hiểu cách mô hình hóa bài toán bằng đối tượng.",
-      "objectives": [
-        "Nhận diện đối tượng và trách nhiệm.",
-        "Mô tả tương tác giữa các đối tượng."
-      ],
-      "sortOrder": 1
-    }
-  ]
-}
-```
+The current Knowledge model uses the canonical `MODULE.ID` through
+`MODULE_MENU.MODULE_ID`, not the retired `MODULE_STRUCTURE.ID_STRUCTURE`:
 
-The DB stores `OBJECTIVE` as newline-separated plain text, and the service
-splits non-blank lines into the `objectives` JSON array. Empty `OBJECTIVE`
-returns `[]`. This API does not read or write the original YAML.
-As with Overview, `lang` is mandatory; invalid language parameters return
-400; a nonexistent/hidden module, inactive parent, hidden topic/category,
-missing/disabled translation, or no milestones returns 404 without fallback.
-Only GET is exposed under the `oracle` profile; the module tree stays lightweight.
+- `MODULE_MENU` stores Chapter and Section nodes. A Chapter belongs to a
+  Module; a Section belongs to a Chapter. `NODE_TYPE` is `CHAPTER` or
+  `SECTION`, and slugs are unique within their owner scope.
+- `MODULE_MENU_LANGUAGE` stores localized `TITLE` and optional `DESCRIPTION`.
+- `MODULE_KNOWLEDGE` stores one active lesson metadata row per Section,
+  including optional `DIFFICULT` (`BASIC`, `INTERMEDIATE`, `ADVANCED`).
+- `MODULE_KNOWLEDGE_LANGUAGE` stores localized lesson `CONTENT`, `STATUS`,
+  `FOCUS`, `PROBLEM_SOLVED`, `MECHANISM`, `APPLICATION_VALUE` and `SUMMARY`.
 
-Since YAML milestone IDs are intentionally discarded, repeated imports
-cannot upsert milestones by key. An importer should replace the given
-module/language's milestones when reimporting; generated `ID_ROADMAP` values
-may change, so do not attach durable external references unless the import
-strategy changes. Import only `NODE_TYPE = 'MODULE'` content, ensure the
-language exists, validate required fields and VARCHAR2 byte limits, and
-preserve YAML array order in `SORT_ORDER`. Oracle `VARCHAR2` remains
-limited by `MAX_STRING_SIZE` (normally 4000 bytes with STANDARD) even with
-CHAR semantics.
+Create these tables manually using `sql/17.sql` through `sql/20.sql`; Spring
+Boot never runs schema DDL. The retired `sql/08_module_knowledge_menu.sql`
+depends on `MODULE_STRUCTURE.ID_STRUCTURE` and is **not** this schema.
+Read-only models, repositories, services and controllers live under
+`module/menu/` and `module/knowledge/`.
 
-For a separate Oracle application user, grant `SELECT` on the new table:
+All Knowledge GET APIs call `ModuleCoreService.getVisibleModule` first; the
+Module, active placement, all ancestor Groups and owning Topic/Category must
+be visible. Chapter identity is scoped to Module; Section identity is scoped
+to Chapter. The primary keys (`MODULE_MENU.ID`, `MODULE_KNOWLEDGE.ID`) remain
+stable UI identities; public URLs use Chapter and Section slugs.
 
-```sql
-GRANT SELECT ON LEARNING_PLATFORM.MODULE_ROADMAP TO LEARNING_READ;
-```
+`GET /api/v1/modules/{moduleSlug}/menu?lang=vi` returns a lightweight object
+with `slug`, `languageCode` and `chapters`. Each Chapter exposes `id`,
+`slug`, `title`, `description`, `sortOrder`, `lessonCount` and ordered
+`sections`. Each Section exposes `id`, `slug`, `title`, `description`,
+`sortOrder`, nullable `knowledgeId`/`difficulty` and Boolean `available`/
+`hasSummary`. `lessonCount` counts only available lessons. Nodes are ordered
+by `(SORT_ORDER, ID)` within their parent. Untranslated Chapters or Sections
+are omitted without fallback. A visible Module with **zero Chapters** returns
+`200` and an empty `chapters` list; a Module with Chapters but no translations
+for the requested locale returns `404`.
 
-Tests: `src/test/java/com/learningplatform/backend/roadmap/ModuleRoadmapIntegrationTest.java`
-runs with the H2 test datasource using `ddl-auto=create-drop`; production
-still uses manual SQL creation.
+`GET /api/v1/modules/{moduleSlug}/knowledge/{chapterSlug}/{sectionSlug}?lang=vi`
+returns `moduleSlug`, `languageCode`, localized `chapter` and `section`
+objects (`id`, `slug`, `title`, `description`), `knowledgeId`,
+`difficulty`, `markdownContent`, `focus`, `problemSolved`, `mechanism`,
+`applicationValue` and `summary`.
+`GET /api/v1/modules/{moduleSlug}/chapters/{chapterSlug}/insights?lang=vi`
+returns `moduleSlug`, `languageCode`, localized `chapter` and ordered
+`lessons` containing Section `id`, `slug`, `title`, `sortOrder`,
+`knowledgeId`, `difficulty` and four comparison fields (`focus`,
+`problemSolved`, `mechanism`, `applicationValue`). Only published lessons
+appear; no CONTENT/SUMMARY CLOBs are loaded.
 
-### MODULE_REFERENCE (read-only API; one row per reference link)
+**Readiness policy:** only active Knowledge with non-null `DIFFICULT` and an
+active-language translation with `STATUS = 'WRITTEN'` is public; `CONTENT`,
+`SUMMARY`, `FOCUS`, `PROBLEM_SOLVED`, `MECHANISM` and `APPLICATION_VALUE`
+must each contain a non-whitespace character. The Menu computes readiness
+using an Oracle/H2 `REGEXP_LIKE` scalar projection without fetching CLOB
+contents. The detail service checks the same policy in Java; insights first
+check the same scalar gate and fetch only four metadata columns. Unpublished
+Sections remain in Menu with `available: false` and `hasSummary: false`,
+but detail returns `404`. There is no locale fallback.
 
-Create `MODULE_REFERENCE` manually by running `sql/07_module_reference.sql` as
-the Oracle schema owner, after `03_module_structure.sql` and `04_language.sql`.
-This DDL is **not** executed by Spring Boot (production `ddl-auto=none`).
-If a separate app read user is used, grant it SELECT on MODULE_REFERENCE.
+Missing/blank/oversized `lang` and malformed slugs return `400`. Invisible
+Modules, inactive Chapters/Sections/Knowledge, missing or inactive locales,
+missing required translations and unpublished lesson detail return `404`.
+All three APIs require the `oracle` profile, return JSON and use the same
+CORS allowlist as the existing Module endpoints.
 
-| Column | Type | Purpose |
-| --- | --- | --- |
-| ID_REFERENCE | NUMBER(19) IDENTITY PK | Technical reference row identifier |
-| ID_STRUCTURE | NUMBER(19) NOT NULL FK | Existing MODULE_STRUCTURE node |
-| LANGUAGE_CODE | VARCHAR2(10 CHAR) NOT NULL FK | Existing language |
-| TITLE | VARCHAR2(300 CHAR) NOT NULL | Display title |
-| URL | VARCHAR2(2000 CHAR) NOT NULL | Absolute HTTPS URL (import validation) |
-| DESCRIPTION | VARCHAR2(1000 CHAR) nullable | Optional description |
-| SORT_ORDER | NUMBER(10) NOT NULL | Original YAML entry order |
-
-No composite ID, milestone/reference business key, URL uniqueness, CLOB, or
-`SORT_ORDER` uniqueness. Index `IX_MREF_MODULE_LANG_SORT` supports ordered
-queries by `ID_STRUCTURE` and `LANGUAGE_CODE`.
-
-`reference/` contains `ModuleReference` (immutable JPA model),
-`ModuleReferenceRepository` (read-only queries), `ModuleReferenceService`,
-`ModuleReferenceController`, and two DTO records.
-
-```http
-GET /api/v1/modules/java-oop/reference?lang=vi
-```
-
-Example 200 response:
-
-```json
-{
-  "slug": "java-oop",
-  "languageCode": "vi",
-  "references": [
-    {
-      "id": 101,
-      "title": "Java Language Specification",
-      "url": "https://docs.oracle.com/javase/specs/",
-      "description": "Official Java specification.",
-      "sortOrder": 1
-    }
-  ]
-}
-```
-
-The endpoint behaves like Overview/Roadmap: it requires `lang`, returns 400
-for blank/oversized language codes, 404 for missing/disabled translations,
-absent rows, hidden MODULE/GROUP, inactive ancestors, hidden Topics or
-inactive Categories. There is **no language fallback**. Null descriptions
-are exposed as empty strings to match the frontend Reference item type.
-References are fetched separately from the navigation tree. Only GET is
-exposed, with the existing `oracle` profile and CORS origins.
-
-The importer lives in `java-learning/scripts/import-module-references.py`,
-supports offline/connected dry-run and explicit `--apply` with atomic
-replace per module/language. It skips empty `references: []` skeletons.
-Imported content must be verified as HTTPS and fit VARCHAR2 limits.
-When a list changes, replacement regenerates `ID_REFERENCE` values.
-The frontend currently uses published YAML via `ReferencePanel` and still
-needs separate integration work to fetch this API and expose tab availability.
-
-Tests: `src/test/java/com/learningplatform/backend/reference/ModuleReferenceIntegrationTest.java`
-use H2 with `ddl-auto=create-drop`, not production Oracle.
+MockMvc/H2 tests are in
+`src/test/java/com/learningplatform/backend/DomainModelMappingIntegrationTest.java`,
+covering empty menu, ordering, slug scope, localization, readiness (including
+whitespace-only CLOBs), inactive data and Module/Topic visibility. H2 schema
+creation is test-only; no Oracle writes are performed.
