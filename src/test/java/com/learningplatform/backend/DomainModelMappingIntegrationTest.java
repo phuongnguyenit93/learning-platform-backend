@@ -559,33 +559,98 @@ class DomainModelMappingIntegrationTest {
     @Test
     void menuKeepsUnwrittenLessonsUnavailableAndDetailReturnsNotFound() throws Exception {
         jdbc.update("update MODULE_KNOWLEDGE_LANGUAGE set STATUS = 'DRAFT' where KNOWLEDGE_ID = 800");
-        assertUnpublishedLesson();
+        assertUnpublishedLesson(true);
 
         jdbc.update("update MODULE_KNOWLEDGE_LANGUAGE set STATUS = 'WRITTEN', CONTENT = '  ' where KNOWLEDGE_ID = 800");
-        assertUnpublishedLesson();
+        assertUnpublishedLesson(true);
 
-        jdbc.update("update MODULE_KNOWLEDGE_LANGUAGE set CONTENT = '# Stream', SUMMARY = '  ' where KNOWLEDGE_ID = 800");
-        assertUnpublishedLesson();
+        jdbc.update("update MODULE_KNOWLEDGE_LANGUAGE set CONTENT = null where KNOWLEDGE_ID = 800");
+        assertUnpublishedLesson(true);
 
-        jdbc.update("update MODULE_KNOWLEDGE_LANGUAGE set SUMMARY = 'Tóm tắt', FOCUS = '  ' where KNOWLEDGE_ID = 800");
-        assertUnpublishedLesson();
-
-        jdbc.update("update MODULE_KNOWLEDGE_LANGUAGE set FOCUS = 'Stream pipeline', PROBLEM_SOLVED = null where KNOWLEDGE_ID = 800");
-        assertUnpublishedLesson();
-
-        jdbc.update("update MODULE_KNOWLEDGE_LANGUAGE set PROBLEM_SOLVED = 'Xử lý collection' where KNOWLEDGE_ID = 800");
+        jdbc.update("update MODULE_KNOWLEDGE_LANGUAGE set CONTENT = '# Stream' where KNOWLEDGE_ID = 800");
         jdbc.update("update MODULE_KNOWLEDGE set DIFFICULT = null where ID = 800");
-        assertUnpublishedLesson();
+        assertUnpublishedLesson(true);
     }
 
-    private void assertUnpublishedLesson() throws Exception {
+    private void assertUnpublishedLesson(boolean hasSummary) throws Exception {
         mockMvc.perform(get("/api/v1/modules/java-stream-api/menu?lang=vi"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.chapters[0].lessonCount").value(0))
                 .andExpect(jsonPath("$.chapters[0].sections[0].available").value(false))
-                .andExpect(jsonPath("$.chapters[0].sections[0].hasSummary").value(false));
+                .andExpect(jsonPath("$.chapters[0].sections[0].hasSummary").value(hasSummary));
         mockMvc.perform(get("/api/v1/modules/java-stream-api/knowledge/fundamentals/stream-basics?lang=vi"))
                 .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/v1/modules/java-stream-api/chapters/fundamentals/insights?lang=vi"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.lessons.length()").value(0));
+    }
+
+    @Test
+    void writtenMarkdownWithNullOptionalMetadataIsPublicInAllThreeApis() throws Exception {
+        jdbc.update("""
+                update MODULE_KNOWLEDGE_LANGUAGE
+                set FOCUS = null, PROBLEM_SOLVED = null, MECHANISM = null,
+                    APPLICATION_VALUE = null, SUMMARY = null
+                where KNOWLEDGE_ID = 800
+                """);
+
+        mockMvc.perform(get("/api/v1/modules/java-stream-api/menu?lang=vi"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.chapters[0].lessonCount").value(1))
+                .andExpect(jsonPath("$.chapters[0].sections[0].available").value(true))
+                .andExpect(jsonPath("$.chapters[0].sections[0].knowledgeId").value(800))
+                .andExpect(jsonPath("$.chapters[0].sections[0].difficulty").value("INTERMEDIATE"))
+                .andExpect(jsonPath("$.chapters[0].sections[0].hasSummary").value(false));
+
+        mockMvc.perform(get("/api/v1/modules/java-stream-api/knowledge/fundamentals/stream-basics?lang=vi"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.knowledgeId").value(800))
+                .andExpect(jsonPath("$.difficulty").value("INTERMEDIATE"))
+                .andExpect(jsonPath("$.markdownContent").value("# Stream"))
+                .andExpect(jsonPath("$.focus").value(nullValue()))
+                .andExpect(jsonPath("$.problemSolved").value(nullValue()))
+                .andExpect(jsonPath("$.mechanism").value(nullValue()))
+                .andExpect(jsonPath("$.applicationValue").value(nullValue()))
+                .andExpect(jsonPath("$.summary").value(nullValue()));
+
+        mockMvc.perform(get("/api/v1/modules/java-stream-api/chapters/fundamentals/insights?lang=vi"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.lessons.length()").value(1))
+                .andExpect(jsonPath("$.lessons[0].knowledgeId").value(800))
+                .andExpect(jsonPath("$.lessons[0].focus").value(nullValue()))
+                .andExpect(jsonPath("$.lessons[0].problemSolved").value(nullValue()))
+                .andExpect(jsonPath("$.lessons[0].mechanism").value(nullValue()))
+                .andExpect(jsonPath("$.lessons[0].applicationValue").value(nullValue()));
+    }
+
+    @Test
+    void whitespaceOnlyOptionalMetadataSerializesAsNullWithoutHidingLesson() throws Exception {
+        jdbc.update("""
+                update MODULE_KNOWLEDGE_LANGUAGE
+                set FOCUS = '  ', PROBLEM_SOLVED = '   ', MECHANISM = '  ',
+                    APPLICATION_VALUE = ' ', SUMMARY = '   '
+                where KNOWLEDGE_ID = 800
+                """);
+
+        mockMvc.perform(get("/api/v1/modules/java-stream-api/menu?lang=vi"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.chapters[0].lessonCount").value(1))
+                .andExpect(jsonPath("$.chapters[0].sections[0].available").value(true))
+                .andExpect(jsonPath("$.chapters[0].sections[0].hasSummary").value(false));
+        mockMvc.perform(get("/api/v1/modules/java-stream-api/knowledge/fundamentals/stream-basics?lang=vi"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.focus").value(nullValue()))
+                .andExpect(jsonPath("$.problemSolved").value(nullValue()))
+                .andExpect(jsonPath("$.mechanism").value(nullValue()))
+                .andExpect(jsonPath("$.applicationValue").value(nullValue()))
+                .andExpect(jsonPath("$.summary").value(nullValue()));
+        mockMvc.perform(get("/api/v1/modules/java-stream-api/chapters/fundamentals/insights?lang=vi"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.lessons.length()").value(1))
+                .andExpect(jsonPath("$.lessons[0].focus").value(nullValue()))
+                .andExpect(jsonPath("$.lessons[0].problemSolved").value(nullValue()))
+                .andExpect(jsonPath("$.lessons[0].mechanism").value(nullValue()))
+                .andExpect(jsonPath("$.lessons[0].applicationValue").value(nullValue()));
     }
 
     @Test
@@ -704,7 +769,12 @@ class DomainModelMappingIntegrationTest {
         jdbc.update("update MODULE_KNOWLEDGE_LANGUAGE set SUMMARY = '   ' where KNOWLEDGE_ID = 800");
         mockMvc.perform(get("/api/v1/modules/java-stream-api/chapters/fundamentals/insights?lang=vi"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.lessons.length()").value(0));
+                .andExpect(jsonPath("$.lessons.length()").value(1))
+                .andExpect(jsonPath("$.lessons[0].knowledgeId").value(800));
+        mockMvc.perform(get("/api/v1/modules/java-stream-api/menu?lang=vi"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.chapters[0].sections[0].available").value(true))
+                .andExpect(jsonPath("$.chapters[0].sections[0].hasSummary").value(false));
     }
 
     @Test

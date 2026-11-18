@@ -453,24 +453,29 @@ for the requested locale returns `404`.
 `GET /api/v1/modules/{moduleSlug}/knowledge/{chapterSlug}/{sectionSlug}?lang=vi`
 returns `moduleSlug`, `languageCode`, localized `chapter` and `section`
 objects (`id`, `slug`, `title`, `description`), `knowledgeId`,
-`difficulty`, `markdownContent`, `focus`, `problemSolved`, `mechanism`,
-`applicationValue` and `summary`.
+`difficulty`, `markdownContent`, nullable `focus`, `problemSolved`, `mechanism`,
+`applicationValue` and `summary`. These five optional fields are returned as
+JSON `null` when missing or whitespace-only; a separate metadata importer
+may fill them later without changing publication.
 `GET /api/v1/modules/{moduleSlug}/chapters/{chapterSlug}/insights?lang=vi`
 returns `moduleSlug`, `languageCode`, localized `chapter` and ordered
 `lessons` containing Section `id`, `slug`, `title`, `sortOrder`,
-`knowledgeId`, `difficulty` and four comparison fields (`focus`,
-`problemSolved`, `mechanism`, `applicationValue`). Only published lessons
-appear; no CONTENT/SUMMARY CLOBs are loaded.
+`knowledgeId`, `difficulty` and four nullable comparison fields (`focus`,
+`problemSolved`, `mechanism`, `applicationValue`). Published lessons appear
+even if these fields are missing; no CONTENT/SUMMARY CLOBs are loaded.
 
 **Readiness policy:** only active Knowledge with non-null `DIFFICULT` and an
-active-language translation with `STATUS = 'WRITTEN'` is public; `CONTENT`,
-`SUMMARY`, `FOCUS`, `PROBLEM_SOLVED`, `MECHANISM` and `APPLICATION_VALUE`
-must each contain a non-whitespace character. The Menu computes readiness
-using an Oracle/H2 `REGEXP_LIKE` scalar projection without fetching CLOB
-contents. The detail service checks the same policy in Java; insights first
-check the same scalar gate and fetch only four metadata columns. Unpublished
-Sections remain in Menu with `available: false` and `hasSummary: false`,
-but detail returns `404`. There is no locale fallback.
+active-language translation with `STATUS = 'WRITTEN'` and nonblank `CONTENT`
+is public. `FOCUS`, `PROBLEM_SOLVED`, `MECHANISM`, `APPLICATION_VALUE`
+and `SUMMARY` are optional and never gate publication. The Menu uses
+an Oracle/H2 `REGEXP_LIKE` scalar projection on the CONTENT CLOB without
+loading it. The detail service applies the same rule in Java, and Insights
+uses the same scalar gate while fetching only the four comparison fields.
+`hasSummary` is calculated separately from readiness for each localized
+Section: it is true only when that row's SUMMARY contains non-whitespace
+text, even when `available` is false. A published lesson can therefore have
+`available: true` and `hasSummary: false`. Unpublished lesson details return
+`404`. There is no locale fallback.
 
 Missing/blank/oversized `lang` and malformed slugs return `400`. Invisible
 Modules, inactive Chapters/Sections/Knowledge, missing or inactive locales,
@@ -481,5 +486,6 @@ CORS allowlist as the existing Module endpoints.
 MockMvc/H2 tests are in
 `src/test/java/com/learningplatform/backend/DomainModelMappingIntegrationTest.java`,
 covering empty menu, ordering, slug scope, localization, readiness (including
-whitespace-only CLOBs), inactive data and Module/Topic visibility. H2 schema
+whitespace-only CONTENT), nullable metadata, independent summary flag,
+inactive data and Module/Topic visibility. H2 schema
 creation is test-only; no Oracle writes are performed.

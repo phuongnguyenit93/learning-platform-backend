@@ -123,7 +123,10 @@ public class ModuleChapterInsightsService {
             lessons.add(new KnowledgeInsightLessonDto(
                     section.getId(), section.getSlug(), title.getTitle(), section.getSortOrder(),
                     available.getKnowledgeId(), Difficulty.valueOf(available.getDifficulty()),
-                    item.focus(), item.problemSolved(), item.mechanism(), item.applicationValue()));
+                    KnowledgeMetadataValue.optional(item.focus()),
+                    KnowledgeMetadataValue.optional(item.problemSolved()),
+                    KnowledgeMetadataValue.optional(item.mechanism()),
+                    KnowledgeMetadataValue.optional(item.applicationValue())));
         }
         return response(module, languageCode, chapter, chapterTitle, List.copyOf(lessons));
     }

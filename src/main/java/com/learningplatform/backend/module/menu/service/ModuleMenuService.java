@@ -117,7 +117,8 @@ public class ModuleMenuService {
                     section.getId(), section.getSlug(), title.getTitle(),
                     title.getDescription(), section.getSortOrder(),
                     published == null ? null : published.getKnowledgeId(),
-                    difficulty, available, available);
+                    difficulty, available,
+                    published != null && Integer.valueOf(1).equals(published.getHasSummary()));
             sectionsByChapter.computeIfAbsent(section.getMenuParentId(), ignored -> new ArrayList<>())
                     .add(result);
         }

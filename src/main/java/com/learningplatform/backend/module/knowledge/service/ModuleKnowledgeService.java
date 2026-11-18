@@ -19,7 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-/** Returns only fully written, localized lessons in visible module hierarchies. */
+/** Returns WRITTEN Markdown lessons even when optional QA metadata is missing. */
 @Service
 @Profile("oracle")
 @Transactional(readOnly = true)
@@ -83,23 +83,18 @@ public class ModuleKnowledgeService {
                 new KnowledgeMenuNodeDto(
                         section.getId(), section.getSlug(), sectionTitle.getTitle(), sectionTitle.getDescription()),
                 lesson.getId(), lesson.getDifficult(),
-                translation.getContent(), translation.getFocus(), translation.getProblemSolved(),
-                translation.getMechanism(), translation.getApplicationValue(), translation.getSummary());
+                translation.getContent(), KnowledgeMetadataValue.optional(translation.getFocus()),
+                KnowledgeMetadataValue.optional(translation.getProblemSolved()),
+                KnowledgeMetadataValue.optional(translation.getMechanism()),
+                KnowledgeMetadataValue.optional(translation.getApplicationValue()),
+                KnowledgeMetadataValue.optional(translation.getSummary()));
     }
 
     /** Must match the CLOB-aware REGEXP_LIKE availability projection in ModuleKnowledgeRepository. */
     private static boolean readyToRead(ModuleKnowledgeLanguage translation) {
         return "WRITTEN".equals(translation.getStatus())
-                && nonblank(translation.getContent())
-                && nonblank(translation.getSummary())
-                && nonblank(translation.getFocus())
-                && nonblank(translation.getProblemSolved())
-                && nonblank(translation.getMechanism())
-                && nonblank(translation.getApplicationValue());
-    }
-
-    private static boolean nonblank(String value) {
-        return value != null && !value.isBlank();
+                && translation.getContent() != null
+                && !translation.getContent().isBlank();
     }
 
     private static ResponseStatusException notFound() {
