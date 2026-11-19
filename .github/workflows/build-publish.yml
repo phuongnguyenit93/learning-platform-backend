@@ -1,4 +1,4 @@
-name: Build and Publish Backend
+name: Build, Publish and Deploy Backend
 
 on:
   push:
@@ -12,7 +12,8 @@ permissions:
 
 concurrency:
   group: backend-image-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a running deployment when another commit is pushed.
+  cancel-in-progress: false
 
 jobs:
   build-and-publish:
@@ -63,3 +64,88 @@ jobs:
           tags: |
             ${{ steps.image.outputs.name }}:latest
             ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+
+  deploy:
+    name: Deploy to Oracle A1 (Docker Compose + OAuth)
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Validate SSH secrets
+        env:
+          ORACLE_SSH_HOST: ${{ secrets.ORACLE_SSH_HOST }}
+          ORACLE_SSH_USER: ${{ secrets.ORACLE_SSH_USER }}
+          ORACLE_SSH_PRIVATE_KEY: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
+          ORACLE_SSH_KNOWN_HOSTS: ${{ secrets.ORACLE_SSH_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          for name in ORACLE_SSH_HOST ORACLE_SSH_USER ORACLE_SSH_PRIVATE_KEY ORACLE_SSH_KNOWN_HOSTS; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing repository secret $name"
+              exit 1
+            fi
+          done
+
+      - name: Configure SSH with verified host key
+        env:
+          ORACLE_SSH_PRIVATE_KEY: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
+          ORACLE_SSH_KNOWN_HOSTS: ${{ secrets.ORACLE_SSH_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$ORACLE_SSH_PRIVATE_KEY" | sed 's/\r$//' > "$HOME/.ssh/oracle_deploy_key"
+          chmod 600 "$HOME/.ssh/oracle_deploy_key"
+          printf '%s\n' "$ORACLE_SSH_KNOWN_HOSTS" | sed 's/\r$//' > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Update backend container and verify readiness
+        env:
+          ORACLE_SSH_HOST: ${{ secrets.ORACLE_SSH_HOST }}
+          ORACLE_SSH_USER: ${{ secrets.ORACLE_SSH_USER }}
+        shell: bash
+        run: |
+          # Deploy the exact image this workflow published (not a moving "latest" tag).
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}:sha-${GITHUB_SHA}"
+          ssh -T \
+            -i "$HOME/.ssh/oracle_deploy_key" \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o BatchMode=yes \
+            -o ConnectTimeout=20 \
+            "$ORACLE_SSH_USER@$ORACLE_SSH_HOST" \
+            "BACKEND_IMAGE='$IMAGE' bash -se" <<'REMOTE'
+          set -euo pipefail
+          cd /opt/learning-platform/backend
+          test -f compose.yaml
+          test -f compose.oauth.yaml
+
+          # Do not print secrets or modify the secrets directory on the VPS.
+          # sudo -n fails fast if the deploy account requires a password.
+          sudo -n env BACKEND_IMAGE="$BACKEND_IMAGE" \
+            docker compose -f compose.yaml -f compose.oauth.yaml config --quiet
+          sudo -n env BACKEND_IMAGE="$BACKEND_IMAGE" \
+            docker compose -f compose.yaml -f compose.oauth.yaml \
+            up -d --pull always --no-deps backend
+
+          # Confirm HTTP readiness, including a real Oracle-backed catalog query,
+          # rather than merely checking that the container started.
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --max-time 5 -o /dev/null \
+                http://127.0.0.1:8080/api/v1/categories \
+              && curl --fail --silent --show-error --max-time 5 \
+                http://127.0.0.1:8080/api/auth/config \
+                | grep -Eq '"googleLoginEnabled"[[:space:]]*:[[:space:]]*true'; then
+              echo "Backend is healthy, Oracle catalog responds, Google OAuth is enabled."
+              exit 0
+            fi
+            sleep 4
+          done
+
+          echo "Backend did not pass the HTTP readiness checks." >&2
+          sudo -n env BACKEND_IMAGE="$BACKEND_IMAGE" \
+            docker compose -f compose.yaml -f compose.oauth.yaml ps backend
+          exit 1
+          REMOTE
