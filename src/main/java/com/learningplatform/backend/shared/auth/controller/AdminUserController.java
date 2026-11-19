@@ -1,7 +1,7 @@
-package com.learningplatform.backend.auth.controller;
+package com.learningplatform.backend.shared.auth.controller;
 
-import com.learningplatform.backend.auth.dto.AdminUsersPageDto;
-import com.learningplatform.backend.auth.service.AccountService;
+import com.learningplatform.backend.shared.auth.dto.AdminUsersPageDto;
+import com.learningplatform.backend.shared.auth.service.AccountService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Profile;
 import org.springframework.web.bind.annotation.GetMapping;

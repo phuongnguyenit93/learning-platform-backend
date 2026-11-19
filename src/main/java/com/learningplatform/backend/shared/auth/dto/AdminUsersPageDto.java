@@ -1,4 +1,4 @@
-package com.learningplatform.backend.auth.dto;
+package com.learningplatform.backend.shared.auth.dto;
 
 import java.util.List;
 

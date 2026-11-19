@@ -1,4 +1,4 @@
-package com.learningplatform.backend.auth.service;
+package com.learningplatform.backend.shared.auth.service;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Profile;

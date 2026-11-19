@@ -1,4 +1,4 @@
-package com.learningplatform.backend.auth;
+package com.learningplatform.backend.shared.auth;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -48,7 +48,8 @@ class GoogleSecurityIntegrationTest {
                 .andExpect(status().isUnauthorized());
         mockMvc.perform(get("/oauth2/authorization/google"))
                 .andExpect(status().is3xxRedirection())
-                .andExpect(header().string("Location", containsString("accounts.google.com")));
+                .andExpect(header().string("Location", containsString("accounts.google.com")))
+                .andExpect(header().string("Location", containsString("prompt=select_account")));
     }
 
     @Test

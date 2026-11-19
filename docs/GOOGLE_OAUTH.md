@@ -84,6 +84,20 @@ browser cookie is valid for 90 days from issuance (it survives browser restarts)
 This is a client cookie expiry, not a server-enforced absolute session lifetime.
 Logout invalidates the session server-side.
 
+Every Google authorization request includes the OAuth parameter
+prompt=select_account. Google displays its account chooser when the user
+signs in again; this does not sign out of Google or require a password.
+
+## Auth module and persistence
+
+Authentication code lives under com.learningplatform.backend.shared.auth:
+controllers, DTOs, services, security configuration, JPA entities and
+repositories. AccountService uses Spring Data JPA for APP_USER, APP_ROLE and
+APP_USER_ROLE. The existing Oracle tables and API contracts stay unchanged.
+Spring Session JDBC separately manages SPRING_SESSION and
+SPRING_SESSION_ATTRIBUTES; those framework tables do not use account JPA
+entities.
+
 ## First ADMIN
 
 Google users are always registered as `USER` on first login. After your own

@@ -1,11 +1,11 @@
-package com.learningplatform.backend.auth.dto;
+package com.learningplatform.backend.shared.auth.dto;
 
 import java.util.List;
 
-public record AuthUserDto(
+public record AdminUserDto(
         Long id,
         String email,
         String displayName,
-        String avatarUrl,
+        String status,
         List<String> roles) {
 }

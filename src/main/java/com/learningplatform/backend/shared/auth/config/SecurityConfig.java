@@ -1,9 +1,9 @@
-package com.learningplatform.backend.config;
+package com.learningplatform.backend.shared.auth.config;
 
 import java.util.List;
 
-import com.learningplatform.backend.auth.service.AccountService;
-import com.learningplatform.backend.auth.service.GoogleOidcUserService;
+import com.learningplatform.backend.shared.auth.service.AccountService;
+import com.learningplatform.backend.shared.auth.service.GoogleOidcUserService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -14,6 +14,8 @@ import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
+import org.springframework.security.oauth2.client.web.DefaultOAuth2AuthorizationRequestResolver;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
@@ -59,7 +61,13 @@ public class SecurityConfig {
             HttpSecurity http,
             AccountService accounts,
             GoogleOidcUserService oidcUsers,
+            ClientRegistrationRepository clientRegistrations,
             @Value("${app.auth.frontend-url}") String frontendUrl) throws Exception {
+        var authorizationRequestResolver = new DefaultOAuth2AuthorizationRequestResolver(
+                clientRegistrations, "/oauth2/authorization");
+        authorizationRequestResolver.setAuthorizationRequestCustomizer(
+                builder -> builder.additionalParameters(params -> params.put("prompt", "select_account")));
+
         return http
                 .cors(Customizer.withDefaults())
                 // CSRF remains enabled for cookie-authenticated mutations (including logout).
@@ -79,6 +87,8 @@ public class SecurityConfig {
                         })
                         .anyRequest().permitAll())
                 .oauth2Login(oauth -> oauth
+                        .authorizationEndpoint(endpoint ->
+                                endpoint.authorizationRequestResolver(authorizationRequestResolver))
                         .userInfoEndpoint(userInfo -> userInfo.oidcUserService(oidcUsers))
                         .successHandler((request, response, authentication) ->
                                 response.sendRedirect(frontendUrl))

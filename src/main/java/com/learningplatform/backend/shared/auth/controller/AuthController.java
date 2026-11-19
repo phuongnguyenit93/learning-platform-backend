@@ -1,9 +1,9 @@
-package com.learningplatform.backend.auth.controller;
+package com.learningplatform.backend.shared.auth.controller;
 
 import java.util.Map;
 
-import com.learningplatform.backend.auth.dto.AuthUserDto;
-import com.learningplatform.backend.auth.service.AccountService;
+import com.learningplatform.backend.shared.auth.dto.AuthUserDto;
+import com.learningplatform.backend.shared.auth.service.AccountService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.ObjectProvider;
