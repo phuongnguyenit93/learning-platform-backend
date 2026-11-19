@@ -6,11 +6,10 @@ import java.util.Optional;
 import com.learningplatform.backend.topic.model.Topic;
 import com.learningplatform.backend.topic.model.TopicStatus;
 import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.Repository;
+import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.repository.query.Param;
 
-/** Read-only repository for Topics and their Category visibility. */
-public interface TopicRepository extends Repository<Topic, Long> {
+public interface TopicRepository extends JpaRepository<Topic, Long> {
 
     @Query("""
             select t from Topic t
@@ -30,4 +29,17 @@ public interface TopicRepository extends Repository<Topic, Long> {
             @Param("hidden") TopicStatus hidden);
 
     Optional<Topic> findBySlug(String slug);
+
+    boolean existsByCodeAndIdNot(String code, Long id);
+
+    boolean existsBySlugAndIdNot(String slug, Long id);
+
+    @Query("""
+            select t from Topic t join fetch t.category c
+            order by c.sortOrder, c.id, t.sortOrder, t.id
+            """)
+    List<Topic> findAllForAdmin();
+
+    @Query("select coalesce(max(t.sortOrder), 0) from Topic t where t.category.id = :categoryId")
+    Integer maxSortOrderInCategory(@Param("categoryId") Long categoryId);
 }

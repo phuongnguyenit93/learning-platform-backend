@@ -50,7 +50,10 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
-                .authorizeHttpRequests(authorize -> authorize.anyRequest().permitAll())
+                // Admin APIs must remain protected even when Google OAuth is disabled.
+                .authorizeHttpRequests(authorize -> authorize
+                        .requestMatchers("/api/admin", "/api/admin/**").denyAll()
+                        .anyRequest().permitAll())
                 .build();
     }
 

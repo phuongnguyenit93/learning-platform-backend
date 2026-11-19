@@ -9,12 +9,10 @@ import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import com.learningplatform.backend.shared.persistence.NumericBooleanConverter;
 import org.hibernate.annotations.Check;
-import org.hibernate.annotations.Immutable;
 import jakarta.persistence.Convert;
 
-/** Read-only category catalog. Category writes are managed outside this API. */
+/** Category catalog; only admin APIs may mutate it. */
 @Entity
-@Immutable
 @Check(constraints = "IS_ACTIVE IN (0, 1)")
 @Table(name = "CATEGORY",
         uniqueConstraints = @UniqueConstraint(name = "UQ_CATEGORY_CODE", columnNames = "CODE"))
@@ -39,6 +37,18 @@ public class Category {
     private Boolean active;
 
     protected Category() {
+    }
+
+    public Category(String code, String name, int sortOrder) {
+        this.code = code;
+        this.name = name;
+        this.sortOrder = sortOrder;
+        this.active = true;
+    }
+
+    public void updateDetails(String code, String name) {
+        this.code = code;
+        this.name = name;
     }
 
     public Long getId() { return id; }

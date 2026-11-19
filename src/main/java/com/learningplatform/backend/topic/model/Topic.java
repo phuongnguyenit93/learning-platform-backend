@@ -17,11 +17,9 @@ import jakarta.persistence.Table;
 import jakarta.persistence.Index;
 import jakarta.persistence.UniqueConstraint;
 import org.hibernate.annotations.Check;
-import org.hibernate.annotations.Immutable;
 
-/** Read-only Topic catalog entry belonging to one Category. */
+/** Topic catalog entry belonging to one Category; admin APIs own writes. */
 @Entity
-@Immutable
 @Check(constraints = "STATUS IN ('AVAILABLE', 'COMING_SOON', 'HIDDEN')")
 @Table(name = "TOPIC", uniqueConstraints = {
         @UniqueConstraint(name = "UQ_TOPIC_CODE", columnNames = "CODE"),
@@ -64,6 +62,26 @@ public class Topic {
     private Integer sortOrder;
 
     protected Topic() {
+    }
+
+    public Topic(Category category, String code, String slug, String name,
+            String description, int sortOrder) {
+        this.category = category;
+        this.code = code;
+        this.slug = slug;
+        this.name = name;
+        this.description = description;
+        this.status = TopicStatus.COMING_SOON;
+        this.sortOrder = sortOrder;
+        this.iconSvg = null;
+    }
+
+    /** Deliberately does not modify ICON_SVG, STATUS, CATEGORY_ID or SORT_ORDER. */
+    public void updateDetails(String code, String slug, String name, String description) {
+        this.code = code;
+        this.slug = slug;
+        this.name = name;
+        this.description = description;
     }
 
     public Long getId() { return id; }
