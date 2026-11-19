@@ -15,15 +15,13 @@ import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import com.learningplatform.backend.shared.persistence.NumericBooleanConverter;
 import org.hibernate.annotations.Check;
-import org.hibernate.annotations.Immutable;
 
 /**
  * A hierarchical group within a Topic.
- * The current FK only guarantees that the parent exists; same-Topic and cycle
- * validation remain application responsibilities for the future write layer.
+ * The FK only guarantees that the parent exists; same-Topic and cycle
+ * validation are enforced in the admin structure service before writes.
  */
 @Entity
-@Immutable
 @Check(constraints = "IS_ACTIVE IN (0, 1) AND (PARENT_GROUP_ID IS NULL OR PARENT_GROUP_ID <> ID)")
 @Table(name = "TOPIC_GROUP",
         uniqueConstraints = @UniqueConstraint(
@@ -61,6 +59,25 @@ public class TopicGroup {
     private Boolean active;
 
     protected TopicGroup() {
+    }
+
+    public TopicGroup(Topic topic, String name, String slug, int order, boolean active) {
+        this.topic = topic;
+        this.groupName = name;
+        this.slug = slug;
+        this.sortOrder = order;
+        this.active = active;
+    }
+
+    public void edit(String name, String slug, boolean active) {
+        this.groupName = name;
+        this.slug = slug;
+        this.active = active;
+    }
+
+    public void relocate(TopicGroup parentGroup, int order) {
+        this.parentGroup = parentGroup;
+        this.sortOrder = order;
     }
 
     public Long getId() { return id; }

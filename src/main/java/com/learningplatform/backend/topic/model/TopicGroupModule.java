@@ -16,11 +16,9 @@ import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import com.learningplatform.backend.shared.persistence.NumericBooleanConverter;
 import org.hibernate.annotations.Check;
-import org.hibernate.annotations.Immutable;
 
 /** Places a Module either directly in a Topic or inside one TopicGroup. */
 @Entity
-@Immutable
 @Check(constraints = "IS_ACTIVE IN (0, 1) AND ((GROUP_ID IS NOT NULL AND TOPIC_ID IS NULL) OR (GROUP_ID IS NULL AND TOPIC_ID IS NOT NULL))")
 @Table(name = "TOPIC_GROUP_MODULE",
         uniqueConstraints = @UniqueConstraint(name = "UQ_TGM_MODULE", columnNames = "MODULE_ID"),
@@ -56,6 +54,13 @@ public class TopicGroupModule {
     private Boolean active;
 
     protected TopicGroupModule() {
+    }
+
+    /** Exactly one of TOPIC_ID and GROUP_ID must be non-null. */
+    public void relocate(Topic topic, TopicGroup group, int order) {
+        this.topic = group == null ? topic : null;
+        this.topicGroup = group;
+        this.sortOrder = order;
     }
 
     public Long getId() { return id; }

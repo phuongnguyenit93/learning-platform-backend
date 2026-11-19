@@ -5,11 +5,10 @@ import java.util.Optional;
 
 import com.learningplatform.backend.topic.model.TopicGroup;
 import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.Repository;
+import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.repository.query.Param;
 
-/** Read-only access to the hierarchical groups owned by a Topic. */
-public interface TopicGroupRepository extends Repository<TopicGroup, Long> {
+public interface TopicGroupRepository extends JpaRepository<TopicGroup, Long> {
 
     @Query("""
             select g from TopicGroup g
@@ -21,4 +20,11 @@ public interface TopicGroupRepository extends Repository<TopicGroup, Long> {
     List<TopicGroup> findByTopicId(@Param("topicId") Long topicId);
 
     Optional<TopicGroup> findById(Long id);
+
+    @Query("select g.topic.id from TopicGroup g where g.id = :groupId")
+    Optional<Long> findOwningTopicId(@Param("groupId") Long groupId);
+
+    boolean existsByTopic_IdAndSlug(Long topicId, String slug);
+
+    boolean existsByTopic_IdAndSlugAndIdNot(Long topicId, String slug, Long id);
 }

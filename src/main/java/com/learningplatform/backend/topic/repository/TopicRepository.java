@@ -6,10 +6,17 @@ import java.util.Optional;
 import com.learningplatform.backend.topic.model.Topic;
 import com.learningplatform.backend.topic.model.TopicStatus;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.JpaRepository;
+import jakarta.persistence.LockModeType;
+import java.util.Optional;
 import org.springframework.data.repository.query.Param;
 
 public interface TopicRepository extends JpaRepository<Topic, Long> {
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select t from Topic t where t.id = :topicId")
+    Optional<Topic> lockForStructureChange(@Param("topicId") Long topicId);
 
     @Query("""
             select t from Topic t

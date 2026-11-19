@@ -5,11 +5,19 @@ import java.util.Optional;
 
 import com.learningplatform.backend.topic.model.TopicGroupModule;
 import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.Repository;
+import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.repository.query.Param;
 
-/** Read-only repository for the unique placement of each Module in the Topic tree. */
-public interface TopicGroupModuleRepository extends Repository<TopicGroupModule, Long> {
+public interface TopicGroupModuleRepository extends JpaRepository<TopicGroupModule, Long> {
+
+    @Query("""
+            select p from TopicGroupModule p
+            join fetch p.module m
+            left join fetch p.topicGroup g
+            where p.topic.id = :topicId or g.topic.id = :topicId
+            order by p.sortOrder, p.id
+            """)
+    List<TopicGroupModule> findAllByOwningTopic(@Param("topicId") Long topicId);
 
     @Query("""
             select placement from TopicGroupModule placement
