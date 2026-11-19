@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -236,6 +238,24 @@ class DomainModelMappingIntegrationTest {
                         .value("java-stream-api"))
                 .andExpect(jsonPath("$.root.children[1].nodeKey").value("JAVA_COLLECTIONS"))
                 .andExpect(jsonPath("$.root.children[1].slug").value("java-collections"));
+    }
+
+    @Test
+    void securityAllowsAnonymousRequestsAndCorsPreflight() throws Exception {
+        mockMvc.perform(get("/api/v1/topics"))
+                .andExpect(status().isOk());
+
+        // Security must not return 401/403 for an unauthenticated request.
+        // The controller has no POST mapping, so Spring MVC returns 405.
+        mockMvc.perform(post("/api/v1/topics"))
+                .andExpect(status().isMethodNotAllowed());
+
+        mockMvc.perform(options("/api/v1/topics")
+                        .header("Origin", "https://nguyendodinhphuong.name.vn")
+                        .header("Access-Control-Request-Method", "GET"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(
+                        "Access-Control-Allow-Origin", "https://nguyendodinhphuong.name.vn"));
     }
 
     @Test

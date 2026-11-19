@@ -1,0 +1,15 @@
+# Opt-in overlay: use only after Google OAuth credentials have been installed.
+# docker compose -f compose.yaml -f compose.oauth.yaml up -d
+services:
+  backend:
+    environment:
+      GOOGLE_AUTH_ENABLED: "true"
+    secrets:
+      - spring.security.oauth2.client.registration.google.client-id
+      - spring.security.oauth2.client.registration.google.client-secret
+
+secrets:
+  spring.security.oauth2.client.registration.google.client-id:
+    file: ${LEARNING_SECRETS_DIR:-/opt/learning-platform/secrets}/spring.security.oauth2.client.registration.google.client-id
+  spring.security.oauth2.client.registration.google.client-secret:
+    file: ${LEARNING_SECRETS_DIR:-/opt/learning-platform/secrets}/spring.security.oauth2.client.registration.google.client-secret

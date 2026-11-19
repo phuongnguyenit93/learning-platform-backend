@@ -1,10 +1,31 @@
 spring:
   application:
     name: learning-platform-backend
+  session:
+    timeout: 30d
+    jdbc:
+      # Oracle schema is managed manually by sql/22_authentication.sql.
+      initialize-schema: never
 
 server:
   port: ${PORT:8080}
   shutdown: graceful
+  # Required for HTTPS OAuth redirect URIs behind Nginx on Oracle A1.
+  forward-headers-strategy: framework
+  servlet:
+    session:
+      timeout: 30d
+      cookie:
+        name: SESSION
+        http-only: true
+        secure: true
+        same-site: lax
+
+app:
+  auth:
+    google:
+      enabled: ${GOOGLE_AUTH_ENABLED:false}
+    frontend-url: ${AUTH_FRONTEND_URL:https://nguyendodinhphuong.name.vn}
 
 # Keep the Oracle-backed catalog opt-in; without this profile, the app
 # starts without a database connection and exposes no catalog endpoints.

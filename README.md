@@ -20,6 +20,24 @@ Invoke-RestMethod http://localhost:8080/api/v1/topics
 
 Có thể đổi port bằng biến môi trường `PORT`.
 
+### Spring Security + Google OIDC login
+
+- Khi `GOOGLE_AUTH_ENABLED=false` (mặc định), mọi API hiện có vẫn `permitAll()`;
+  form login, HTTP Basic và CSRF đang tắt như trước.
+- Khi bật Google login với profile `oracle` và Google Client ID/Secret, Spring
+  Security xác minh OIDC, tự tạo `APP_USER` với role `USER`, sử dụng Spring
+  Session JDBC trong Oracle. `/api/admin/**` kiểm tra role `ADMIN` hiện tại
+  trong DB ở từng request; các API học tập hiện có vẫn công khai.
+- Session cookie có `HttpOnly`, `Secure`, `SameSite=Lax`. CSRF được bật khi
+  OAuth hoạt động; FE lấy token tại `GET /api/auth/csrf` trước khi POST logout.
+  CORS cho phép credentials chỉ từ danh sách frontend origin đã cấu hình.
+
+Các API: `GET /api/auth/config`, `GET /api/auth/me`,
+`GET /api/auth/csrf`, `POST /api/auth/logout` và
+`GET /oauth2/authorization/google`. Xem
+[`docs/GOOGLE_OAUTH.md`](docs/GOOGLE_OAUTH.md) để cấu hình Google Console,
+deploy và cấp quyền ADMIN.
+
 ## Docker
 
 Build JAR trước khi build image:
